@@ -77,7 +77,7 @@ services:
       - "backend-tier"
 
   redis:
-    image: redis
+    image: fduarte42/docker-pogocache:1.0
     networks:
       - "backend-tier"
     restart: always
@@ -100,7 +100,7 @@ services:
       - "backend-tier"
     deploy:
       restart_policy:
-        condition: any
+        condition: none
       resources:
         limits:
           cpus: "1"

@@ -7,8 +7,8 @@ function _initUtils() {
     GUM_EXECUTABLE=$(which gum)
 
     if [[ -z "$GUM_EXECUTABLE" ]]; then
-        warning "Gum executable not found in PATH, using build in version."
-        GUM_EXECUTABLE="$DIR/bin/gum"
+        critical "Gum executable not found in PATH"
+        exit 1
     fi
 }
 

@@ -201,7 +201,7 @@ function _init() {
 
     for i in {33060..33099}; do
         DB_HOST_PORT=$i
-        DB_HOST_PORT_IN_USE=$(ss -tulw | grep -F "*:$DB_HOST_PORT" > /dev/null && echo "yes" || echo "no")
+        DB_HOST_PORT_IN_USE=$((nc -zv host.docker.internal $DB_HOST_PORT) 2>/dev/null && echo "yes" || echo "no")
         if [ "$DB_HOST_PORT_IN_USE" == "no" ]; then
             break
         fi
@@ -231,6 +231,37 @@ EOF
     fi
 }
 
+function _install_plugin() {
+    local DOCKER_CLI_PLUGIN_PATH="$HOME/.docker/cli-plugins"
+    local DOCKER_SOCK
+    DOCKER_SOCK="$(docker context inspect --format '{{(index .Endpoints.docker.Host)}}' | sed -e 's|^unix://||')"
+
+    mkdir -p "$DOCKER_CLI_PLUGIN_PATH"
+    if [[ -f "$DOCKER_CLI_PLUGIN_PATH/docker-control" ]]; then
+        info "Removing old plugin under $DOCKER_CLI_PLUGIN_PATH/docker-control"
+        rm "$DOCKER_CLI_PLUGIN_PATH/docker-control"
+    fi
+
+    info "Installing plugin under $DOCKER_CLI_PLUGIN_PATH"
+    cat << EOF | tee "$DOCKER_CLI_PLUGIN_PATH/docker-control" 1>/dev/null
+#!/usr/bin/env bash
+if [[ "\$1" == "docker-cli-plugin-metadata"  ]] || [[ "\$DOCKER_CLI_PLUGIN_METADATA" == "1" ]]; then
+    docker run --rm ik/docker-plugin "docker-cli-plugin-metadata"
+    exit 0
+fi
+DOCKER_SOCK="\$(docker context inspect --format '{{(index .Endpoints.docker.Host)}}' | sed -e 's|^unix://||')"
+
+docker network create -d bridge docker-plugin-net 1>/dev/null
+docker run --rm --name docker-plugin-socat --network docker-plugin-net -v "\$DOCKER_SOCK":/var/run/docker.sock --detach alpine/socat tcp-listen:2375,fork,reuseaddr unix-connect:/var/run/docker.sock 1>/dev/null
+docker run --rm --network docker-plugin-net -e DOCKER_HOST=tcp://docker-plugin-socat:2375 -e HOME=/home/\$USER -v "\$HOME":/home/\$USER -v "\$(pwd)":/context -it -u \$(id -u):\$(id -g) --add-host=host.docker.internal:host-gateway ik/docker-plugin "\$@"
+docker stop docker-plugin-socat 1>/dev/null
+docker network rm docker-plugin-net 1>/dev/null
+EOF
+    chmod 755 "$DOCKER_CLI_PLUGIN_PATH/docker-control"
+    info "Installation successful. You can start using the plugin with: docker control help"
+    exit
+}
+
 function _merge() {
     merge
 }
@@ -254,13 +285,13 @@ function _update() {
 function initializePlugin() {
     if [[ "$1" == "docker-cli-plugin-metadata"  ]] || [[ "$DOCKER_CLI_PLUGIN_METADATA" == "1" ]]; then
       cat <<EOF
-    {
-      "SchemaVersion": "0.1.0",
-      "Vendor": "Interligent kommunizieren GmbH",
-      "Version": "$2",
-      "ShortDescription": "Docker CLI plugin to control ik docker stack",
-      "URL": "https://interligent.com"
-    }
+{
+  "SchemaVersion": "0.1.0",
+  "Vendor": "Interligent kommunizieren GmbH",
+  "Version": "$2",
+  "ShortDescription": "Docker CLI plugin to control ik docker stack",
+  "URL": "https://interligent.com"
+}
 EOF
       exit 0
     fi
@@ -452,6 +483,14 @@ function parseArguments() {
                     critical "Current directory is not empty"
                     exit 1
                 fi
+                ;;
+
+            install-plugin)
+                if [[ -z $HOME ]]; then
+                    critial "No \$HOME directory configured"
+                    exit 1
+                fi
+                _install_plugin
                 ;;
             pull)
                 checkDir
