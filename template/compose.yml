@@ -78,6 +78,7 @@ services:
 
   redis:
     image: fduarte42/docker-pogocache:1.0
+    command: -h 0.0.0.0 -p 6379
     networks:
       - "backend-tier"
     restart: always
@@ -91,25 +92,6 @@ services:
         reservations:
           memory: 512M
 
-  redis-ui:
-    depends_on:
-      - redis
-    image: patrikx3/p3x-redis-ui
-    networks:
-      - "frontend-tier"
-      - "backend-tier"
-    deploy:
-      restart_policy:
-        condition: none
-      resources:
-        limits:
-          cpus: "1"
-          memory: 32M
-        reservations:
-          memory: 16M
-    volumes:
-      - "./config/p3xrs-conns.json:/settings/.p3xrs-conns.json:ro"
-
   mail:
     image: mailhog/mailhog
     networks:
@@ -122,7 +104,6 @@ services:
       - gotenberg
       - mail
       - phpmyadmin
-      - redis-ui
     environment:
       APACHE_ALIAS: ${BASE_DOMAIN}
       APP_ENV: ${ENVIRONMENT}
@@ -188,6 +169,11 @@ services:
           memory: 512M
         reservations:
           memory: 16M
+    ulimits:
+      nproc: 4096   # Max Threads erhöhen
+      nofile:
+        soft: 65536
+        hard: 65536
     volumes:
       - "./logs:/logs"
 

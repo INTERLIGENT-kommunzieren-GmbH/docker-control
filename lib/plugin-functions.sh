@@ -243,10 +243,25 @@ function _install_plugin() {
     info "Installing plugin"
     cat << EOF | tee "$DOCKER_CLI_PLUGIN_PATH/docker-control" 1>/dev/null
 #!/usr/bin/env bash
-if [[ "\$1" == "docker-cli-plugin-metadata"  ]] || [[ "\$DOCKER_CLI_PLUGIN_METADATA" == "1" ]]; then
-    docker run --rm ik/docker-plugin "docker-cli-plugin-metadata"
-    exit 0
-fi
+
+PROJECT_DIR=\$(pwd)
+PARAMETER=()
+while [[ \$# -gt 0 ]]; do
+    case "\$1" in
+        docker-cli-plugin-metadata)
+            docker run --rm ik/docker-plugin docker-cli-plugin-metadata
+            exit
+            ;;
+        --dir|-d)
+            shift
+            PROJECT_DIR=\$(realpath "\$1")
+            shift
+            ;;
+        *)
+            PARAMETER+=("\$1")
+            shift
+    esac
+done
 
 OPTS=(
     --rm -it
@@ -254,8 +269,8 @@ OPTS=(
     -u "\$(id -u):\$(id -g)"
     -v "\$SSH_AUTH_SOCK":"\$SSH_AUTH_SOCK"
     -e SSH_AUTH_SOCK="\$SSH_AUTH_SOCK"
-    -v "\$(pwd)":"\$(pwd)"
-    -w "\$(pwd)"
+    -v "\$PROJECT_DIR":"\$PROJECT_DIR"
+    -w "\$PROJECT_DIR"
     -v "\$HOME/.docker/cli-plugins":"/cli-plugins"
     -e DOCKER_HOST=tcp://localhost:2375
 )
@@ -266,7 +281,7 @@ if ! nc -zv localhost 2375 2>/dev/null; then
 fi
 
 mkdir -p /tmp/.ik/docker-plugin
-docker run "\${OPTS[@]}" ik/docker-plugin "\$@"
+docker run "\${OPTS[@]}" ik/docker-plugin "\${PARAMETER[@]}"
 EOF
     chmod 755 "$DOCKER_CLI_PLUGIN_PATH/docker-control"
     info "Installation successful. You can start using the plugin with: docker control help"
@@ -439,8 +454,9 @@ function parseArguments() {
     while [[ $# -gt 0 ]]; do
         case "$1" in
             --dir|-d)
-                PROJECT_DIR=$(realpath "$2")
-                shift 2
+                shift
+                PROJECT_DIR=$(realpath "$1")
+                shift
                 ;;
             add-deploy-config)
                 checkDir
@@ -467,7 +483,8 @@ function parseArguments() {
                 ;;
             console)
                 checkDir
-                _console "${2:-php}"
+                shift
+                _console "${1:-php}"
                 exit 0
                 ;;
             deploy)
