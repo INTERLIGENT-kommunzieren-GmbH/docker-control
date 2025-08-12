@@ -160,7 +160,7 @@ function _help() {
     info "  $(printf "%-${FIRST_COL_WIDTH}s\n" "deploy <env> <branch>") Deploy branch to environment"
     info "  $(printf "%-${FIRST_COL_WIDTH}s\n" "merge") Automatic branch merging"
     info "  $(printf "%-${FIRST_COL_WIDTH}s\n" "help") Show this help"
-    info "  $(printf "%-${FIRST_COL_WIDTH}s\n" "init") Initialize empty directory with project template"
+    info "  $(printf "%-${FIRST_COL_WIDTH}s\n" "init") Initialize empty directory with template"
     info "  $(printf "%-${FIRST_COL_WIDTH}s\n" "pull") Pull current container images"
     info "  $(printf "%-${FIRST_COL_WIDTH}s\n" "pull-ingress") Pull current ingress images"
     info "  $(printf "%-${FIRST_COL_WIDTH}s\n" "restart") Restart project containers"
