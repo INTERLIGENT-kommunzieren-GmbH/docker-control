@@ -145,33 +145,34 @@ function dockerComposeIngress() {
 }
 
 function _help() {
+    local FIRST_COL_WIDTH=30
     headline "IK Docker Control $SERVICE"
     newline
     sub_headline "Options"
-    info "  $(printf "%-25s\n" "-d|--dir") Project directory (default: current directory)"
+    info "  $(printf "%-${FIRST_COL_WIDTH}s\n" "-d|--dir") Project directory (default: current directory)"
     newline
     sub_headline "Commands"
-    info "  $(printf "%-25s\n" "add-deploy-config") Add deployment config"
-    info "  $(printf "%-25s\n" "build") Build containers"
-    info "  $(printf "%-25s\n" "cap <env>") Deploy via capistrano to environment"
-    info "  $(printf "%-25s\n" "create-control-script <name>") Create a custom control script"
-    info "  $(printf "%-25s\n" "console <container>") Enter container console (defaults to php)"
-    info "  $(printf "%-25s\n" "deploy <env> <branch>") Deploy branch to environment"
-    info "  $(printf "%-25s\n" "merge") Automatic branch merging"
-    info "  $(printf "%-25s\n" "help") Show this help"
-    info "  $(printf "%-25s\n" "init") Initialize empty directory with project template"
-    info "  $(printf "%-25s\n" "pull") Pull current container images"
-    info "  $(printf "%-25s\n" "pull-ingress") Pull current ingress images"
-    info "  $(printf "%-25s\n" "restart") Restart project containers"
-    info "  $(printf "%-25s\n" "restart-ingress") Restart ingress containers"
-    info "  $(printf "%-25s\n" "start") Start project containers"
-    info "  $(printf "%-25s\n" "start-ingress") Start ingress containers"
-    info "  $(printf "%-25s\n" "status") Show status of project containers"
-    info "  $(printf "%-25s\n" "status-ingress") Show status of ingress containers"
-    info "  $(printf "%-25s\n" "stop") Stop project containers"
-    info "  $(printf "%-25s\n" "stop-ingress") Stop ingress containers"
-    info "  $(printf "%-25s\n" "update") Update project with current template"
-    info "  $(printf "%-25s\n" "version") Show version information"
+    info "  $(printf "%-${FIRST_COL_WIDTH}s\n" "add-deploy-config") Add deployment config"
+    info "  $(printf "%-${FIRST_COL_WIDTH}s\n" "build") Build containers"
+    info "  $(printf "%-${FIRST_COL_WIDTH}s\n" "cap <env>") Deploy via capistrano to environment"
+    info "  $(printf "%-${FIRST_COL_WIDTH}s\n" "create-control-script <name>") Create a custom control script"
+    info "  $(printf "%-${FIRST_COL_WIDTH}s\n" "console <container>") Enter container console (defaults to php)"
+    info "  $(printf "%-${FIRST_COL_WIDTH}s\n" "deploy <env> <branch>") Deploy branch to environment"
+    info "  $(printf "%-${FIRST_COL_WIDTH}s\n" "merge") Automatic branch merging"
+    info "  $(printf "%-${FIRST_COL_WIDTH}s\n" "help") Show this help"
+    info "  $(printf "%-${FIRST_COL_WIDTH}s\n" "init") Initialize empty directory with project template"
+    info "  $(printf "%-${FIRST_COL_WIDTH}s\n" "pull") Pull current container images"
+    info "  $(printf "%-${FIRST_COL_WIDTH}s\n" "pull-ingress") Pull current ingress images"
+    info "  $(printf "%-${FIRST_COL_WIDTH}s\n" "restart") Restart project containers"
+    info "  $(printf "%-${FIRST_COL_WIDTH}s\n" "restart-ingress") Restart ingress containers"
+    info "  $(printf "%-${FIRST_COL_WIDTH}s\n" "start") Start project containers"
+    info "  $(printf "%-${FIRST_COL_WIDTH}s\n" "start-ingress") Start ingress containers"
+    info "  $(printf "%-${FIRST_COL_WIDTH}s\n" "status") Show status of project containers"
+    info "  $(printf "%-${FIRST_COL_WIDTH}s\n" "status-ingress") Show status of ingress containers"
+    info "  $(printf "%-${FIRST_COL_WIDTH}s\n" "stop") Stop project containers"
+    info "  $(printf "%-${FIRST_COL_WIDTH}s\n" "stop-ingress") Stop ingress containers"
+    info "  $(printf "%-${FIRST_COL_WIDTH}s\n" "update") Update project with current template"
+    info "  $(printf "%-${FIRST_COL_WIDTH}s\n" "version") Show version information"
     newline
 
     if ls "$PROJECT_DIR"/control-scripts/*.sh 1> /dev/null 2>&1; then
@@ -181,7 +182,7 @@ function _help() {
             SHORT_COMMAND=$(basename "$COMMAND" .sh)
             local DESCRIPTION
             DESCRIPTION=$("$COMMAND" _desc_)
-            info "  $(printf "%-25s\n" "${SHORT_COMMAND}") ${DESCRIPTION}"
+            info "  $(printf "%-${FIRST_COL_WIDTH}s\n" "${SHORT_COMMAND}") ${DESCRIPTION}"
         done
         newline
     fi
@@ -235,11 +236,11 @@ function _install_plugin() {
     local DOCKER_CLI_PLUGIN_PATH="/cli-plugins"
 
     if [[ -f "$DOCKER_CLI_PLUGIN_PATH/docker-control" ]]; then
-        info "Removing old plugin under $DOCKER_CLI_PLUGIN_PATH/docker-control"
+        info "Removing old plugin"
         rm "$DOCKER_CLI_PLUGIN_PATH/docker-control"
     fi
 
-    info "Installing plugin under $DOCKER_CLI_PLUGIN_PATH"
+    info "Installing plugin"
     cat << EOF | tee "$DOCKER_CLI_PLUGIN_PATH/docker-control" 1>/dev/null
 #!/usr/bin/env bash
 if [[ "\$1" == "docker-cli-plugin-metadata"  ]] || [[ "\$DOCKER_CLI_PLUGIN_METADATA" == "1" ]]; then
