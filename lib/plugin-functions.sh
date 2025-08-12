@@ -232,11 +232,8 @@ EOF
 }
 
 function _install_plugin() {
-    local DOCKER_CLI_PLUGIN_PATH="$HOME/.docker/cli-plugins"
-    local DOCKER_SOCK
-    DOCKER_SOCK="$(docker context inspect --format '{{(index .Endpoints.docker.Host)}}' | sed -e 's|^unix://||')"
+    local DOCKER_CLI_PLUGIN_PATH="/cli-plugins"
 
-    mkdir -p "$DOCKER_CLI_PLUGIN_PATH"
     if [[ -f "$DOCKER_CLI_PLUGIN_PATH/docker-control" ]]; then
         info "Removing old plugin under $DOCKER_CLI_PLUGIN_PATH/docker-control"
         rm "$DOCKER_CLI_PLUGIN_PATH/docker-control"
@@ -249,13 +246,26 @@ if [[ "\$1" == "docker-cli-plugin-metadata"  ]] || [[ "\$DOCKER_CLI_PLUGIN_METAD
     docker run --rm ik/docker-plugin "docker-cli-plugin-metadata"
     exit 0
 fi
-DOCKER_SOCK="\$(docker context inspect --format '{{(index .Endpoints.docker.Host)}}' | sed -e 's|^unix://||')"
 
-docker network create -d bridge docker-plugin-net 1>/dev/null
-docker run --rm --name docker-plugin-socat --network docker-plugin-net -v "\$DOCKER_SOCK":/var/run/docker.sock --detach alpine/socat tcp-listen:2375,fork,reuseaddr unix-connect:/var/run/docker.sock 1>/dev/null
-docker run --rm --network docker-plugin-net -e DOCKER_HOST=tcp://docker-plugin-socat:2375 -e HOME=/home/\$USER -v "\$HOME":/home/\$USER -v "\$(pwd)":/context -it -u \$(id -u):\$(id -g) --add-host=host.docker.internal:host-gateway ik/docker-plugin "\$@"
-docker stop docker-plugin-socat 1>/dev/null
-docker network rm docker-plugin-net 1>/dev/null
+OPTS=(
+    --rm -it
+    --network host
+    -u "\$(id -u):\$(id -g)"
+    -v "\$SSH_AUTH_SOCK":"\$SSH_AUTH_SOCK"
+    -e SSH_AUTH_SOCK="\$SSH_AUTH_SOCK"
+    -v "\$(pwd)":"\$(pwd)"
+    -w "\$(pwd)"
+    -v "\$HOME/.docker/cli-plugins":"/cli-plugins"
+    -e DOCKER_HOST=tcp://localhost:2375
+)
+
+if ! nc -zv localhost 2375 2>/dev/null; then
+    DOCKER_SOCK="\$(docker context inspect --format '{{(index .Endpoints.docker.Host)}}' | sed -e 's|^unix://||')"
+    docker run --name docker-plugin-port --network host -v "\$DOCKER_SOCK":/var/run/docker.sock --detach alpine/socat tcp-listen:2375,fork,reuseaddr unix-connect:/var/run/docker.sock 1>/dev/null
+fi
+
+mkdir -p /tmp/.ik/docker-plugin
+docker run "\${OPTS[@]}" ik/docker-plugin "\$@"
 EOF
     chmod 755 "$DOCKER_CLI_PLUGIN_PATH/docker-control"
     info "Installation successful. You can start using the plugin with: docker control help"
@@ -274,7 +284,7 @@ function _update() {
     text 'Creating backup {{ Foreground "14" "'"$(basename "$BACKUP_DIR")"'"}}'
     rsync -a --quiet --exclude "backup_*" --exclude .git --exclude htdocs --exclude volumes "$PROJECT_DIR/" "$BACKUP_DIR/" 1>/dev/null
     info "Updating project with current template"
-    rsync -a --quiet --ignore-existing "$TEMPLATE_DIR/" "$PROJECT_DIR/"
+    rsync -a --quiet "$TEMPLATE_DIR/" "$PROJECT_DIR/"
     cat "$PROJECT_DIR"/.gitignore-dist >> "$PROJECT_DIR"/.gitignore
     sort -u "$PROJECT_DIR"/.gitignore -o "$PROJECT_DIR"/.gitignore
     rm "$PROJECT_DIR"/.gitignore-dist

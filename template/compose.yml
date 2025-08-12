@@ -161,7 +161,6 @@ services:
       - db_pw
       - db_name
     volumes:
-      - "~/.ssh:/ssh"
       - "./config/crontab:/tmp/crontab"
       - "./config/htpasswd:/etc/apache2/.htpasswd:ro"
       - "./config/apache-sites:/etc/apache2/sites-enabled:ro"
@@ -186,31 +185,11 @@ services:
       resources:
         limits:
           cpus: "1"
-          memory: 32M
+          memory: 512M
         reservations:
           memory: 16M
     volumes:
       - "./logs:/logs"
-
-  capistrano:
-    build:
-      context: "./build/capistrano"
-    deploy:
-      restart_policy:
-        condition: any
-      resources:
-        limits:
-          cpus: "1"
-          memory: 32M
-        reservations:
-          memory: 16M
-    volumes:
-      - "./volumes/capistrano/Capfile:/app/Capfile:cached"
-      - "./volumes/capistrano/config:/app/config:cached"
-      - "./volumes/capistrano/lib:/app/lib:cached"
-      - "~/.ssh:/ssh"
-    networks:
-      - "backend-tier"
 
 secrets:
   db_root_pw:
