@@ -7,6 +7,7 @@ RUN apk add --no-cache \
     gum \
     netcat-openbsd \
     docker-cli \
+    docker-cli-compose \
     rsync \
     p7zip \
     && rm -rf /var/cache/apk/*
@@ -17,8 +18,5 @@ COPY lib ./lib
 COPY ingress ./ingress
 COPY plugin ./plugin
 COPY template ./template
-
-RUN mkdir -p /context
-WORKDIR /context
 
 ENTRYPOINT ["/app/plugin/docker-control"]
