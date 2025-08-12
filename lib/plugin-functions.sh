@@ -249,7 +249,7 @@ PARAMETER=()
 while [[ \$# -gt 0 ]]; do
     case "\$1" in
         docker-cli-plugin-metadata)
-            docker run --rm ik/docker-plugin docker-cli-plugin-metadata
+            docker run --rm ghcr.io/interligent-kommunzieren-gmbh/docker-plugin:latest docker-cli-plugin-metadata
             exit
             ;;
         --dir|-d)
@@ -281,7 +281,7 @@ if ! nc -zv localhost 2375 2>/dev/null; then
 fi
 
 mkdir -p /tmp/.ik/docker-plugin
-docker run "\${OPTS[@]}" ik/docker-plugin "\${PARAMETER[@]}"
+docker run "\${OPTS[@]}" ghcr.io/interligent-kommunzieren-gmbh/docker-plugin:latest "\${PARAMETER[@]}"
 EOF
     chmod 755 "$DOCKER_CLI_PLUGIN_PATH/docker-control"
     info "Installation successful. You can start using the plugin with: docker control help"
