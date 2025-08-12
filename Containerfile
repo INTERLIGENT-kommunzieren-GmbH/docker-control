@@ -1,16 +1,24 @@
-FROM debian:bookworm-slim
+FROM alpine:latest
 
-WORKDIR /docker-plugin
+RUN apk add --no-cache \
+    bash \
+    openssh-client \
+    git \
+    gum \
+    netcat-openbsd \
+    docker-cli \
+    rsync \
+    p7zip \
+    && rm -rf /var/cache/apk/*
+
+WORKDIR /app
 
 COPY lib ./lib
 COPY ingress ./ingress
 COPY plugin ./plugin
 COPY template ./template
-COPY build/build.sh /build.sh
-
-RUN chmod u+x /build.sh && /build.sh && rm /build.sh
 
 RUN mkdir -p /context
 WORKDIR /context
 
-ENTRYPOINT ["/docker-plugin/plugin/docker-control"]
+ENTRYPOINT ["/app/plugin/docker-control"]

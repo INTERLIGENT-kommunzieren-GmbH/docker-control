@@ -498,7 +498,6 @@ function parseArguments() {
                 exit 0
                 ;;
             pull-ingress)
-                checkDir
                 dockerComposeIngress pull
                 exit 0
                 ;;
@@ -509,7 +508,6 @@ function parseArguments() {
                 exit 0
                 ;;
             restart-ingress)
-                checkDir
                 dockerComposeIngress down
                 dockerComposeIngress up -d
                 exit 0
@@ -520,7 +518,6 @@ function parseArguments() {
                 exit 0
                 ;;
             start-ingress)
-                checkDir
                 dockerComposeIngress up -d
                 exit 0
                 ;;
@@ -530,7 +527,6 @@ function parseArguments() {
                 exit 0
                 ;;
             status-ingress)
-                checkDir
                 dockerComposeIngress ps
                 exit 0
                 ;;
