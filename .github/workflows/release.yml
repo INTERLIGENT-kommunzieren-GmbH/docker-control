@@ -1,0 +1,27 @@
+name: Create Release Tag
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version (e.g. 1.2.3)"
+        required: true
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Create release branch, set VERSION and tag
+        run: |
+          VERSION="${{ github.event.inputs.version }}"
+          git checkout -b "release/$VERSION"
+          sed -i "s/^VERSION=.*/VERSION=\"$VERSION\"/" plugin/docker-control
+          git config user.name "github-actions"
+          git config user.email "github-actions@github.com"
+          git commit -am "Release v$VERSION"
+          git tag "$VERSION"
+          git push origin "release/$VERSION" --tags

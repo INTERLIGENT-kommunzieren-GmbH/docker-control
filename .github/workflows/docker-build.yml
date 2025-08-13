@@ -12,11 +12,6 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Set VERSION from tag
-        run: |
-          VERSION="${GITHUB_REF_NAME}"
-          sed -i "s/^VERSION=.*/VERSION=\"$VERSION\"/" plugin/docker-control
-
       - name: Set up QEMU
         uses: docker/setup-qemu-action@v3
 
