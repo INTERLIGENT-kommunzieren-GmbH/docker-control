@@ -33,7 +33,7 @@ jobs:
           VERSION=$(grep '^VERSION=' plugin/docker-control | cut -d'"' -f2)
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
 
-      - name: Build and push
+      - name: Build and push Docker image
         uses: docker/build-push-action@v5
         with:
           file: ./Containerfile
