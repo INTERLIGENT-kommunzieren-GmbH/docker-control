@@ -18,7 +18,7 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Create release branch, set VERSION and tag
+      - name: Create release branch and set VERSION
         run: |
           VERSION="${{ github.event.inputs.version }}"
           git checkout -b "release/$VERSION"
@@ -26,15 +26,20 @@ jobs:
           git config user.name "github-actions"
           git config user.email "github-actions@github.com"
           git commit -am "Release v$VERSION"
+
+      - name: Push branch and tag using PAT
+        env:
+          GIT_TOKEN: ${{ secrets.PAT_TOKEN }}
+        run: |
+          VERSION="${{ github.event.inputs.version }}"
           git tag "$VERSION"
-          git push origin "release/$VERSION" --tags
-          git push origin "$VERSION"
+          git push https://x-access-token:$GIT_TOKEN@github.com/${{ github.repository }} "release/$VERSION"
+          git push https://x-access-token:$GIT_TOKEN@github.com/${{ github.repository }} "$VERSION"
 
       - name: Generate changelog
         id: changelog
         run: |
           VERSION="${{ github.event.inputs.version }}"
-          # Letztes existierendes Tag (außer dem neuen)
           PREV_TAG=$(git tag --sort=-creatordate | grep -v "^$VERSION$" | head -n 1 || echo "")
           if [ -n "$PREV_TAG" ]; then
             CHANGELOG=$(git log --pretty=format:"- %s (%h)" "$PREV_TAG"..HEAD)
