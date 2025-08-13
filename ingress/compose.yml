@@ -11,8 +11,8 @@ services:
     environment:
       DOCKER_HOST: tcp://localhost:2375
     volumes:
-      - "/tmp/.ik/docker-plugin/volumes/vhosts.d:/etc/nginx/vhost.d:ro"
-      - "/tmp/.ik/docker-plugin/volumes/tls:/etc/nginx/certs:ro"
+      - "${PLUGIN_MOUNTS_DIR}/ingress/vhosts.d:/etc/nginx/vhost.d:ro"
+      - "${PLUGIN_MOUNTS_DIR}/ingress/tls:/etc/nginx/certs:ro"
     logging:
       options:
         max-size: "100M"
@@ -28,7 +28,7 @@ services:
       - "frontend-tier"
     restart: always
     volumes:
-      - "/tmp/.ik/docker-plugin/volumes/tls:/etc/nginx/certs:rw"
+      - "${PLUGIN_MOUNTS_DIR}/ingress/tls:/etc/nginx/certs:rw"
 
 networks:
   frontend-tier:

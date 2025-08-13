@@ -161,6 +161,7 @@ function _help() {
     info "  $(printf "%-${FIRST_COL_WIDTH}s\n" "merge") Automatic branch merging"
     info "  $(printf "%-${FIRST_COL_WIDTH}s\n" "help") Show this help"
     info "  $(printf "%-${FIRST_COL_WIDTH}s\n" "init") Initialize empty directory with template"
+    info "  $(printf "%-${FIRST_COL_WIDTH}s\n" "install-plugin") Install docker plugin"
     info "  $(printf "%-${FIRST_COL_WIDTH}s\n" "pull") Pull current container images"
     info "  $(printf "%-${FIRST_COL_WIDTH}s\n" "pull-ingress") Pull current ingress images"
     info "  $(printf "%-${FIRST_COL_WIDTH}s\n" "restart") Restart project containers"
@@ -171,7 +172,8 @@ function _help() {
     info "  $(printf "%-${FIRST_COL_WIDTH}s\n" "status-ingress") Show status of ingress containers"
     info "  $(printf "%-${FIRST_COL_WIDTH}s\n" "stop") Stop project containers"
     info "  $(printf "%-${FIRST_COL_WIDTH}s\n" "stop-ingress") Stop ingress containers"
-    info "  $(printf "%-${FIRST_COL_WIDTH}s\n" "update") Update project with current template"
+    info "  $(printf "%-${FIRST_COL_WIDTH}s\n" "update") Update docker plugin"
+    info "  $(printf "%-${FIRST_COL_WIDTH}s\n" "update-plugin") Update project with current template"
     info "  $(printf "%-${FIRST_COL_WIDTH}s\n" "version") Show version information"
     newline
 
@@ -272,6 +274,8 @@ OPTS=(
     -v "\$PROJECT_DIR":"\$PROJECT_DIR"
     -w "\$PROJECT_DIR"
     -v "\$HOME/.docker/cli-plugins":"/cli-plugins"
+    -v "\$HOME/.ik/docker-plugin-mounts":"/docker-plugin-mounts"
+    -e PLUGIN_MOUNTS_DIR="\$HOME/.ik/docker-plugin-mounts"
     -e DOCKER_HOST=tcp://localhost:2375
 )
 
@@ -306,6 +310,28 @@ function _update() {
     rm "$PROJECT_DIR"/.gitignore-dist
     info "Update completed."
     newline
+}
+
+function _update_plugin() {
+    local IMAGE
+    local OUT
+
+    IMAGE="ghcr.io/interligent-kommunzieren-gmbh/docker-plugin:latest"
+
+    sub_headline "updating docker image"
+    OUT=$(docker pull "$IMAGE")
+
+    if [[ $OUT == *"Image is up to date"* ]]; then
+        info "Image is already up-to-date. No new image pulled."
+        newline
+    else
+        info "New image pulled."
+        newline
+        docker run --rm \
+          -v "/cli-plugins":"/cli-plugins" \
+          -u "$(id -u):$(id -g)" \
+          "$IMAGE" install-plugin
+    fi
 }
 
 function initializePlugin() {
@@ -512,12 +538,7 @@ function parseArguments() {
                     exit 1
                 fi
                 ;;
-
             install-plugin)
-                if [[ -z $HOME ]]; then
-                    critial "No \$HOME directory configured"
-                    exit 1
-                fi
                 _install_plugin
                 ;;
             pull)
@@ -572,6 +593,9 @@ function parseArguments() {
                 checkDir
                 _update
                 exit 0
+                ;;
+            update-plugin)
+                _update_plugin
                 ;;
             version)
                 headline "IK Docker Control $VERSION"
