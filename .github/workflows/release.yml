@@ -24,7 +24,8 @@ jobs:
           git config user.email "github-actions@github.com"
           git commit -am "Release v$VERSION"
           git tag "$VERSION"
-          git push origin "release/$VERSION" --tags
+          git push origin "release/$VERSION"
+          git push origin "$VERSION"
 
       - name: Generate changelog
         id: changelog
