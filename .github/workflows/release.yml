@@ -7,9 +7,6 @@ on:
         description: "Version (e.g. 1.2.3)"
         required: true
 
-permissions:
-  contents: write
-
 jobs:
   release:
     runs-on: ubuntu-latest
@@ -18,7 +15,7 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Create release branch and set VERSION
+      - name: Create release branch, set VERSION and tag
         run: |
           VERSION="${{ github.event.inputs.version }}"
           git checkout -b "release/$VERSION"
@@ -26,15 +23,9 @@ jobs:
           git config user.name "github-actions"
           git config user.email "github-actions@github.com"
           git commit -am "Release v$VERSION"
-
-      - name: Push branch and tag using PAT
-        env:
-          GIT_TOKEN: ${{ secrets.PAT_TOKEN }}
-        run: |
-          VERSION="${{ github.event.inputs.version }}"
           git tag "$VERSION"
-          git push https://x-access-token:$GIT_TOKEN@github.com/${{ github.repository }} "release/$VERSION"
-          git push https://x-access-token:$GIT_TOKEN@github.com/${{ github.repository }} "$VERSION"
+          git push https://x-access-token:${{ secrets.PAT_TOKEN }}@github.com/${{ github.repository }} "release/$VERSION" --tags
+          git push https://x-access-token:${{ secrets.PAT_TOKEN }}@github.com/${{ github.repository }} "$VERSION"
 
       - name: Generate changelog
         id: changelog
@@ -46,11 +37,9 @@ jobs:
           else
             CHANGELOG=$(git log --pretty=format:"- %s (%h)")
           fi
-          {
-            echo "changelog<<EOF"
-            echo "$CHANGELOG"
-            echo "EOF"
-          } >> "$GITHUB_OUTPUT"
+          echo "changelog<<EOF" >> "$GITHUB_OUTPUT"
+          echo "$CHANGELOG" >> "$GITHUB_OUTPUT"
+          echo "EOF" >> "$GITHUB_OUTPUT"
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
