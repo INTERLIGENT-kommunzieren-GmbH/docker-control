@@ -204,7 +204,7 @@ function _init() {
 
     for i in {33060..33099}; do
         DB_HOST_PORT=$i
-        DB_HOST_PORT_IN_USE=$((nc -zv host.docker.internal $DB_HOST_PORT) 2>/dev/null && echo "yes" || echo "no")
+        DB_HOST_PORT_IN_USE=$(nc -zv host.docker.internal $DB_HOST_PORT 2>/dev/null && echo "yes" || echo "no")
         if [ "$DB_HOST_PORT_IN_USE" == "no" ]; then
             break
         fi
@@ -268,6 +268,7 @@ done
 OPTS=(
     --rm -it
     --network host
+    --add-host host.docker.internal:host-gateway
     -u "\$(id -u):\$(id -g)"
     -v "\$SSH_AUTH_SOCK":"\$SSH_AUTH_SOCK"
     -e SSH_AUTH_SOCK="\$SSH_AUTH_SOCK"
@@ -276,15 +277,15 @@ OPTS=(
     -v "\$HOME/.docker/cli-plugins":"/cli-plugins"
     -v "\$HOME/.ik/docker-plugin-mounts":"/docker-plugin-mounts"
     -e PLUGIN_MOUNTS_DIR="\$HOME/.ik/docker-plugin-mounts"
-    -e DOCKER_HOST=tcp://localhost:2375
+    -e DOCKER_HOST=tcp://host.docker.internal:2375
 )
 
-if ! nc -zv localhost 2375 2>/dev/null; then
+NC_CMD="docker run --rm --quiet --add-host host.docker.internal:host-gateway -it --entrypoint "/usr/bin/nc" ghcr.io/interligent-kommunzieren-gmbh/docker-plugin:latest -zv host.docker.internal 2375"
+if ! "\$NC_CMD" >/dev/null; then
     DOCKER_SOCK="\$(docker context inspect --format '{{(index .Endpoints.docker.Host)}}' | sed -e 's|^unix://||')"
-    docker run --name docker-plugin-port --network host -v "\$DOCKER_SOCK":/var/run/docker.sock --detach --restart always alpine/socat tcp-listen:2375,fork,reuseaddr unix-connect:/var/run/docker.sock 1>/dev/null
+    docker run --name docker-plugin-port --network host --add-host host.docker.internal:host-gateway -v "\$DOCKER_SOCK":/var/run/docker.sock --detach --restart always alpine/socat tcp-listen:2375,fork,bind=host.docker.internal unix-connect:/var/run/docker.sock 1>/dev/null
 fi
 
-mkdir -p /tmp/.ik/docker-plugin
 docker run "\${OPTS[@]}" ghcr.io/interligent-kommunzieren-gmbh/docker-plugin:latest "\${PARAMETER[@]}"
 EOF
     chmod 755 "$DOCKER_CLI_PLUGIN_PATH/docker-control"

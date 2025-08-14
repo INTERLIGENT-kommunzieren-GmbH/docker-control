@@ -25,9 +25,11 @@ services:
     image: sebastienheyd/self-signed-proxy-companion
     environment:
       NGINX_PROXY_CONTAINER: nginx-proxy
-      DOCKER_HOST: tcp://localhost:2375
+      DOCKER_HOST: tcp://host.docker.internal:2375
     networks:
       - "frontend-tier"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     restart: always
     volumes:
       - "${PLUGIN_MOUNTS_DIR}/ingress/tls:/etc/nginx/certs:rw"
