@@ -15,12 +15,6 @@ function checkDir() {
     fi
 }
 
-function _cap() {
-    # shellcheck disable=SC2124
-    local PARAMETER="$@"
-    dockerCompose run --rm capistrano bash -l -i -c "cap $PARAMETER"
-}
-
 function _createControlScript {
     local COMMAND=$1
     if [[ -f "${PROJECT_DIR}/control-scripts/${COMMAND}.sh" ]]; then
@@ -47,6 +41,114 @@ EOF
         chmod u+x "$PROJECT_DIR/control-scripts/${COMMAND}.sh"
 
         text 'command {{ Foreground "14" "'"$COMMAND"'"}} created under {{ Foreground "14" "'"$PROJECT_DIR"'"}}'
+    fi
+}
+
+function _createNewRelease() {
+    local SRC_BRANCH
+    local RELEASE
+    local TODAY
+    local BASE_TAG
+    local NEXT_INDEX
+    local EXISTING_TAGS
+    local REPO_DIR="$PROJECT_DIR/htdocs"
+    local WORKTREE_DIR
+
+    sub_headline "create new release"
+    newline
+
+    TODAY=$(date '+%Y%m%d')
+    git -C "$REPO_DIR" fetch --all --prune
+
+    EXISTING_TAGS=$(git -C "$REPO_DIR" branch -r --list "origin/releases/$TODAY*" \
+        | sed 's|.*/releases/||' | sed 's/\r//g' | sort)
+
+    NEXT_INDEX=1
+    if [[ -n "$EXISTING_TAGS" ]]; then
+        local max=0
+        while IFS= read -r tag; do
+            local idx="${tag##*_}"
+            if [[ "$idx" =~ ^[0-9]+$ ]] && (( idx > max )); then
+                max=$idx
+            fi
+        done <<< "$EXISTING_TAGS"
+        NEXT_INDEX=$((max + 1))
+    fi
+
+    BASE_TAG="${TODAY}_${NEXT_INDEX}"
+
+    input -l "source branch" -d "master" -r SRC_BRANCH
+    input -l "release tag" -d "$BASE_TAG" -r RELEASE
+
+    # 🔍 Check branch existence
+    if git -C "$REPO_DIR" show-ref --verify --quiet "refs/heads/releases/$RELEASE" \
+        || git -C "$REPO_DIR" show-ref --verify --quiet "refs/remotes/origin/releases/$RELEASE"; then
+        critical "Branch releases/$RELEASE already exists (local or remote)"
+        exit 1
+    fi
+
+    WORKTREE_DIR="$PROJECT_DIR/releases/$RELEASE"
+
+    if [[ -d "$WORKTREE_DIR" ]]; then
+        critical "Worktree directory already exists: $WORKTREE_DIR"
+        exit 1
+    fi
+    if git -C "$REPO_DIR" worktree list | grep -q "releases/$RELEASE"; then
+        critical "Branch releases/$RELEASE is already checked out in another worktree"
+        exit 1
+    fi
+
+    # Ensure source branch up-to-date
+    git -C "$REPO_DIR" fetch origin "$SRC_BRANCH"
+    git -C "$REPO_DIR" branch -f "$SRC_BRANCH" "origin/$SRC_BRANCH"
+    git -C "$REPO_DIR" worktree prune
+
+    # Create worktree & branch
+    git -C "$REPO_DIR" worktree add -b "releases/$RELEASE" "$WORKTREE_DIR" "$SRC_BRANCH" \
+        || { critical "Failed to create worktree"; exit 1; }
+
+    if [[ ! -f "$WORKTREE_DIR/composer.lock" ]]; then
+        sub_headline "Create composer.lock"
+
+        info "Installing packages"
+        # shellcheck disable=SC2034
+        local BASE_DOMAIN
+        # shellcheck disable=SC2034
+        local ENVIRONMENT
+        # shellcheck disable=SC2034
+        local DB_HOST_PORT
+        local PHP_VERSION
+        # shellcheck disable=SC2034
+        local PROJECTNAME
+        # shellcheck disable=SC2034
+        local XDEBUG_IP
+        # shellcheck disable=SC2034
+        local IDE_KEY
+        . "$PROJECT_DIR"/.env
+        docker run -u www-data \
+            -v "\$SSH_AUTH_SOCK":"\$SSH_AUTH_SOCK" \
+            -e SSH_AUTH_SOCK="\$SSH_AUTH_SOCK" \
+            -v "$PROJECT_DIR/volumes/composer-cache:/var/www/.composer/cache" \
+            -v "$WORKTREE_DIR":/var/www/html fduarte42/docker-php:"$PHP_VERSION" \
+            composer i -o
+
+        info "Cleaning up vendor folder"
+        rm -rf "$WORKTREE_DIR/vendor"
+
+        git -C "$WORKTREE_DIR" add composer.lock
+        git -C "$WORKTREE_DIR" commit -m "Add composer.lock for $RELEASE"
+    fi
+
+    # Push to origin
+    git -C "$WORKTREE_DIR" push -u origin "releases/$RELEASE"
+
+    info "Created and pushed release branch releases/$RELEASE (temporary worktree: $WORKTREE_DIR)"
+
+    # Remove worktree
+    if git -C "$REPO_DIR" worktree remove "$WORKTREE_DIR" --force; then
+        info "Temporary worktree removed"
+    else
+        warning "Could not remove worktree automatically: $WORKTREE_DIR"
     fi
 }
 
@@ -167,7 +269,6 @@ function _help() {
     sub_headline "Commands"
     info "  $(printf "%-${FIRST_COL_WIDTH}s\n" "add-deploy-config") Add deployment config"
     info "  $(printf "%-${FIRST_COL_WIDTH}s\n" "build") Build containers"
-    info "  $(printf "%-${FIRST_COL_WIDTH}s\n" "cap <env>") Deploy via capistrano to environment"
     info "  $(printf "%-${FIRST_COL_WIDTH}s\n" "create-control-script <name>") Create a custom control script"
     info "  $(printf "%-${FIRST_COL_WIDTH}s\n" "console <container>") Enter container console (defaults to php)"
     info "  $(printf "%-${FIRST_COL_WIDTH}s\n" "deploy <env> <branch>") Deploy branch to environment"
@@ -177,6 +278,7 @@ function _help() {
     info "  $(printf "%-${FIRST_COL_WIDTH}s\n" "install-plugin") Install docker plugin"
     info "  $(printf "%-${FIRST_COL_WIDTH}s\n" "pull") Pull current container images"
     info "  $(printf "%-${FIRST_COL_WIDTH}s\n" "pull-ingress") Pull current ingress images"
+    info "  $(printf "%-${FIRST_COL_WIDTH}s\n" "release") Create new release"
     info "  $(printf "%-${FIRST_COL_WIDTH}s\n" "restart") Restart project containers"
     info "  $(printf "%-${FIRST_COL_WIDTH}s\n" "restart-ingress") Restart ingress containers"
     info "  $(printf "%-${FIRST_COL_WIDTH}s\n" "show-running") Show running projects"
@@ -516,12 +618,6 @@ function parseArguments() {
                 _createControlScript "$@"
                 exit 0
                 ;;
-            cap)
-                checkDir
-                shift
-                _cap "$@"
-                exit 0
-                ;;
             console)
                 checkDir
                 shift
@@ -563,6 +659,11 @@ function parseArguments() {
                 ;;
             pull-ingress)
                 dockerComposeIngress pull
+                exit 0
+                ;;
+            release)
+                checkDir
+                _createNewRelease
                 exit 0
                 ;;
             restart)

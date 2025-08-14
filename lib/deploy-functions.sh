@@ -30,8 +30,26 @@ function createDeploymentZip() {
     # create worktree
     git -C "$PROJECT_DIR"/htdocs worktree add --detach "$PROJECT_DIR/deployments/$DEPLOYMENT" "$BRANCH"
 
+    # shellcheck disable=SC2034
+    local BASE_DOMAIN
+    # shellcheck disable=SC2034
+    local ENVIRONMENT
+    # shellcheck disable=SC2034
+    local DB_HOST_PORT
+    local PHP_VERSION
+    # shellcheck disable=SC2034
+    local PROJECTNAME
+    # shellcheck disable=SC2034
+    local XDEBUG_IP
+    # shellcheck disable=SC2034
+    local IDE_KEY
     . "$PROJECT_DIR"/.env
-    docker run -u www-data -v "$PROJECT_DIR/deployments/$DEPLOYMENT":/var/www/html fduarte42/docker-php:"$PHP_VERSION" composer i -o
+    docker run -u www-data \
+        -v "\$SSH_AUTH_SOCK":"\$SSH_AUTH_SOCK" \
+        -e SSH_AUTH_SOCK="\$SSH_AUTH_SOCK" \
+        -v "$PROJECT_DIR/volumes/composer-cache:/var/www/.composer/cache" \
+        -v "$PROJECT_DIR/deployments/$DEPLOYMENT":/var/www/html fduarte42/docker-php:"$PHP_VERSION" \
+        composer i -o
 
     if [[ $(type -t "pre_deploy_encode_hook_$ENV") == "function" ]]; then
         DEPLOYMENT=$("pre_deploy_encode_hook_$ENV" "$ENV" "$BRANCH" "$DEPLOYMENT")
