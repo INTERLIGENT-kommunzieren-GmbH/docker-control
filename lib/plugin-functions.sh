@@ -281,7 +281,7 @@ OPTS=(
 
 if ! nc -zv localhost 2375 2>/dev/null; then
     DOCKER_SOCK="\$(docker context inspect --format '{{(index .Endpoints.docker.Host)}}' | sed -e 's|^unix://||')"
-    docker run --name docker-plugin-port --network host -v "\$DOCKER_SOCK":/var/run/docker.sock --detach alpine/socat tcp-listen:2375,fork,reuseaddr unix-connect:/var/run/docker.sock 1>/dev/null
+    docker run --name docker-plugin-port --network host -v "\$DOCKER_SOCK":/var/run/docker.sock --detach --restart always alpine/socat tcp-listen:2375,fork,reuseaddr unix-connect:/var/run/docker.sock 1>/dev/null
 fi
 
 mkdir -p /tmp/.ik/docker-plugin
