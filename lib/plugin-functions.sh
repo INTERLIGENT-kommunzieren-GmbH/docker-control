@@ -591,7 +591,9 @@ function parseArguments() {
                 ;;
             update)
                 checkDir
+                dockerCompose down
                 _update
+                dockerCompose up -d
                 exit 0
                 ;;
             update-plugin)

@@ -94,6 +94,7 @@ services:
 
   mail:
     image: mailhog/mailhog
+    platform: linux/amd64
     networks:
       - "backend-tier"
     restart: always
@@ -152,7 +153,7 @@ services:
       - db-share:/db-share
 
   logrotate:
-    image: blacklabelops/logrotate:latest
+    image: ghcr.io/fduarte42/logrotate:latest
     environment:
       LOGROTATE_COPIES: 12
       LOGS_DIRECTORIES: "/logs"
@@ -166,14 +167,9 @@ services:
       resources:
         limits:
           cpus: "1"
-          memory: 512M
+          memory: 128M
         reservations:
           memory: 16M
-    ulimits:
-      nproc: 4096   # Max Threads erhöhen
-      nofile:
-        soft: 65536
-        hard: 65536
     volumes:
       - "./logs:/logs"
 
