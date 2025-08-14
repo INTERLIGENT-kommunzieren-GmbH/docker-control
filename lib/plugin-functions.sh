@@ -103,6 +103,19 @@ function _deploy() {
     deploy "$ENV" "$USER" "$DOMAIN" "$SERSERVICE_ROOT" "$DEPLOY_BRANCH"
 }
 
+function _showRunningProjects() {
+    (
+      echo "PROJECT DIRECTORY"
+      docker ps -a \
+        --filter 'label=com.interligent.dockerplugin.project' \
+        --filter 'label=com.interligent.dockerplugin.dir' \
+        --format '{{.ID}}' \
+      | xargs -I {} docker inspect \
+          --format '{{ index .Config.Labels "com.interligent.dockerplugin.project" }} {{ index .Config.Labels "com.interligent.dockerplugin.dir" }}' {} \
+      | sort -u
+    ) | column -t
+}
+
 function addDeployConfig() {
     local ENV
     input -n -l "environment" -r ENV
@@ -166,6 +179,7 @@ function _help() {
     info "  $(printf "%-${FIRST_COL_WIDTH}s\n" "pull-ingress") Pull current ingress images"
     info "  $(printf "%-${FIRST_COL_WIDTH}s\n" "restart") Restart project containers"
     info "  $(printf "%-${FIRST_COL_WIDTH}s\n" "restart-ingress") Restart ingress containers"
+    info "  $(printf "%-${FIRST_COL_WIDTH}s\n" "show-running") Show running projects"
     info "  $(printf "%-${FIRST_COL_WIDTH}s\n" "start") Start project containers"
     info "  $(printf "%-${FIRST_COL_WIDTH}s\n" "start-ingress") Start ingress containers"
     info "  $(printf "%-${FIRST_COL_WIDTH}s\n" "status") Show status of project containers"
@@ -204,7 +218,7 @@ function _init() {
 
     for i in {33060..33099}; do
         DB_HOST_PORT=$i
-        DB_HOST_PORT_IN_USE=$(nc -zv host.docker.internal $DB_HOST_PORT 2>/dev/null && echo "yes" || echo "no")
+        DB_HOST_PORT_IN_USE=$(nc -zv host.docker.internal "$DB_HOST_PORT" 2>/dev/null && echo "yes" || echo "no")
         if [ "$DB_HOST_PORT_IN_USE" == "no" ]; then
             break
         fi
@@ -560,6 +574,10 @@ function parseArguments() {
             restart-ingress)
                 dockerComposeIngress down
                 dockerComposeIngress up -d
+                exit 0
+                ;;
+            show-running)
+                _showRunningProjects
                 exit 0
                 ;;
             start)
