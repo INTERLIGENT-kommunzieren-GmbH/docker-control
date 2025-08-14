@@ -1,5 +1,7 @@
 services:
   nginx:
+    labels:
+      com.interligent.dockerplugin.proxy: "nginx"
     container_name: nginx-proxy
     image: nginxproxy/nginx-proxy:1.6
     networks:
@@ -21,6 +23,8 @@ services:
         max-file: "4"
 
   proxy-companion:
+    labels:
+      com.interligent.dockerplugin.proxy: "companion"
     container_name: proxy-companion
     image: sebastienheyd/self-signed-proxy-companion
     environment:

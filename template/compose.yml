@@ -2,6 +2,10 @@ name: ${PROJECTNAME}
 services:
 
   db:
+    labels:
+      com.interligent.dockerplugin.service: "db"
+      com.interligent.dockerplugin.dir: "${PROJECT_DIR}"
+      com.interligent.dockerplugin.project: "${PROJECTNAME}"
     command: --max-allowed-packet=16M --transaction-isolation=READ-COMMITTED --innodb-lock-wait-timeout=3600 --sql-mode=ONLY_FULL_GROUP_BY,STRICT_TRANS_TABLES,ERROR_FOR_DIVISION_BY_ZERO,NO_AUTO_CREATE_USER,NO_ENGINE_SUBSTITUTION
     environment:
       MARIADB_ROOT_PASSWORD_FILE: /run/secrets/db_root_pw
@@ -36,6 +40,10 @@ services:
       - db-share:/db-share
 
   phpmyadmin:
+    labels:
+      com.interligent.dockerplugin.service: "phpmyadmin"
+      com.interligent.dockerplugin.dir: "${PROJECT_DIR}"
+      com.interligent.dockerplugin.project: "${PROJECTNAME}"
     depends_on:
       - db
     environment:
@@ -61,6 +69,10 @@ services:
     restart: always
 
   gotenberg:
+    labels:
+      com.interligent.dockerplugin.service: "gotenberg"
+      com.interligent.dockerplugin.dir: "${PROJECT_DIR}"
+      com.interligent.dockerplugin.project: "${PROJECTNAME}"
     image: gotenberg/gotenberg
     command: [ 'gotenberg', '--api-timeout', '300s', '--chromium-allow-file-access-from-files', '--chromium-disable-web-security', '--chromium-ignore-certificate-errors' ]
     deploy:
@@ -76,9 +88,13 @@ services:
     networks:
       - "backend-tier"
 
-  redis:
+  cache:
+    labels:
+      com.interligent.dockerplugin.service: "cache"
+      com.interligent.dockerplugin.dir: "${PROJECT_DIR}"
+      com.interligent.dockerplugin.project: "${PROJECTNAME}"
     image: fduarte42/docker-pogocache:1.0
-    command: -h 0.0.0.0 -p 6379
+    command: -h 0.0.0.0
     networks:
       - "backend-tier"
     restart: always
@@ -93,6 +109,10 @@ services:
           memory: 512M
 
   mail:
+    labels:
+      com.interligent.dockerplugin.service: "mail"
+      com.interligent.dockerplugin.dir: "${PROJECT_DIR}"
+      com.interligent.dockerplugin.project: "${PROJECTNAME}"
     image: mailhog/mailhog
     platform: linux/amd64
     networks:
@@ -100,6 +120,10 @@ services:
     restart: always
 
   php:
+    labels:
+      com.interligent.dockerplugin.service: "php"
+      com.interligent.dockerplugin.dir: "${PROJECT_DIR}"
+      com.interligent.dockerplugin.project: "${PROJECTNAME}"
     depends_on:
       - db
       - gotenberg
@@ -153,6 +177,10 @@ services:
       - db-share:/db-share
 
   logrotate:
+    labels:
+      com.interligent.dockerplugin.service: "logrotate"
+      com.interligent.dockerplugin.dir: "${PROJECT_DIR}"
+      com.interligent.dockerplugin.project: "${PROJECTNAME}"
     image: ghcr.io/fduarte42/logrotate:latest
     environment:
       LOGROTATE_COPIES: 12
