@@ -44,7 +44,9 @@ function createDeploymentZip() {
     # shellcheck disable=SC2034
     local IDE_KEY
     . "$PROJECT_DIR"/.env
-    docker run -u www-data \
+    docker run \
+        -u "$(id -u):$(id -g)" \
+        --group-add www-data \
         -v "\$SSH_AUTH_SOCK":"\$SSH_AUTH_SOCK" \
         -e SSH_AUTH_SOCK="\$SSH_AUTH_SOCK" \
         -v "$PROJECT_DIR/volumes/composer-cache:/var/www/.composer/cache" \

@@ -150,6 +150,9 @@ services:
     image: fduarte42/docker-php:${PHP_VERSION}-debug
     extra_hosts:
       - "host.docker.internal:host-gateway"
+    user: "${UID}:${GID}"
+    group_add:
+      - www-data
     networks:
       - "frontend-tier"
       - "backend-tier"
