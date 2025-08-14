@@ -297,7 +297,7 @@ OPTS=(
 NC_CMD="docker run --rm --quiet --add-host host.docker.internal:host-gateway -it --entrypoint "/usr/bin/nc" ghcr.io/interligent-kommunzieren-gmbh/docker-plugin:latest -zv host.docker.internal 2375"
 if ! \$NC_CMD >/dev/null; then
     DOCKER_SOCK="\$(docker context inspect --format '{{(index .Endpoints.docker.Host)}}' | sed -e 's|^unix://||')"
-    docker run --name docker-plugin-port --network host --add-host host.docker.internal:host-gateway -v "\$DOCKER_SOCK":/var/run/docker.sock --detach --restart always alpine/socat tcp-listen:2375,fork,bind=host.docker.internal unix-connect:/var/run/docker.sock 1>/dev/null
+    docker run --name docker-plugin-port -v "\$DOCKER_SOCK":/var/run/docker.sock --detach --restart always -p 127.0.0.1:2375:2375 alpine/socat tcp-listen:2375,fork,reuseaddr unix-connect:/var/run/docker.sock 1>/dev/null
 fi
 
 docker run "\${OPTS[@]}" ghcr.io/interligent-kommunzieren-gmbh/docker-plugin:latest "\${PARAMETER[@]}"
