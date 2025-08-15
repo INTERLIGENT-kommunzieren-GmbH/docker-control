@@ -364,12 +364,13 @@ function _install_plugin() {
     cat << EOF | tee "$DOCKER_CLI_PLUGIN_PATH/docker-control" 1>/dev/null
 #!/usr/bin/env bash
 
+IMAGE="ghcr.io/interligent-kommunzieren-gmbh/docker-plugin:latest"
 PROJECT_DIR=\$(pwd)
 PARAMETER=()
 while [[ \$# -gt 0 ]]; do
     case "\$1" in
         docker-cli-plugin-metadata)
-            docker run --rm ghcr.io/interligent-kommunzieren-gmbh/docker-plugin:latest docker-cli-plugin-metadata
+            docker run --rm "\$IMAGE" docker-cli-plugin-metadata
             exit
             ;;
         --dir|-d)
@@ -390,8 +391,6 @@ OPTS=(
     -u "\$(id -u):\$(id -g)"
     -e UID="\$(id -u)"
     -e GID="\$(id -g)"
-    -v "\$SSH_AUTH_SOCK":"\$SSH_AUTH_SOCK"
-    -e SSH_AUTH_SOCK="\$SSH_AUTH_SOCK"
     -v "\$PROJECT_DIR":"\$PROJECT_DIR"
     -w "\$PROJECT_DIR"
     -v "\$HOME/.docker/cli-plugins":"/cli-plugins"
@@ -400,13 +399,22 @@ OPTS=(
     -e DOCKER_HOST=tcp://host.docker.internal:2375
 )
 
-NC_CMD="docker run --rm --quiet --add-host host.docker.internal:host-gateway -it --entrypoint "/usr/bin/nc" ghcr.io/interligent-kommunzieren-gmbh/docker-plugin:latest -zv host.docker.internal 2375"
-if ! \$NC_CMD >/dev/null; then
-    DOCKER_SOCK="\$(docker context inspect --format '{{(index .Endpoints.docker.Host)}}' | sed -e 's|^unix://||')"
-    docker run --name docker-plugin-port -v "\$DOCKER_SOCK":/var/run/docker.sock --detach --restart always -p 127.0.0.1:2375:2375 alpine/socat tcp-listen:2375,fork,reuseaddr unix-connect:/var/run/docker.sock 1>/dev/null
+NC_SSH_AGENT_CMD="docker run --rm --quiet --add-host host.docker.internal:host-gateway -it --entrypoint "/usr/bin/nc" "\$IMAGE" -zv host.docker.internal 2222"
+if ! \$NC_SSH_AGENT_CMD >/dev/null; then
+    if [[ -z "$SSH_AUTH_SOCK ]]; then
+        echo "SSH agent seems to not be running."
+        exit 1
+    fi
+    docker run --rm --name docker-plugin-ssh-agent -v "\$SSH_AUTH_SOCK":"/tmp/ssh-agent.sock" --detach --entrypoint "/usr/bin/socat" -p 127.0.0.1:2222:2222 "\$IMAGE" tcp-listen:2222,fork,reuseaddr unix-connect:/tmp/ssh-agent.sock 1>/dev/null
 fi
 
-docker run "\${OPTS[@]}" ghcr.io/interligent-kommunzieren-gmbh/docker-plugin:latest "\${PARAMETER[@]}"
+NC_DOCKER_CMD="docker run --rm --quiet --add-host host.docker.internal:host-gateway -it --entrypoint "/usr/bin/nc" "\$IMAGE" -zv host.docker.internal 2375"
+if ! \$NC_DOCKER_CMD >/dev/null; then
+    DOCKER_SOCK="\$(docker context inspect --format '{{(index .Endpoints.docker.Host)}}' | sed -e 's|^unix://||')"
+    docker run --name docker-plugin-port -v "\$DOCKER_SOCK":/var/run/docker.sock --detach --restart always --entrypoint "/usr/bin/socat" -p 127.0.0.1:2375:2375 "\$IMAGE" tcp-listen:2375,fork,reuseaddr unix-connect:/var/run/docker.sock 1>/dev/null
+fi
+
+docker run "\${OPTS[@]}" "\$IMAGE" "\${PARAMETER[@]}"
 EOF
     chmod 755 "$DOCKER_CLI_PLUGIN_PATH/docker-control"
     info "Installation successful. You can start using the plugin with: docker control help"
@@ -468,6 +476,9 @@ function initializePlugin() {
 EOF
       exit 0
     fi
+
+    socat UNIX-LISTEN:/tmp/ssh-agent.sock,fork,mode=666 TCP:host.docker.internal:2222 >/dev/null &
+    export SSH_AUTH_SOCK=/tmp/ssh-agent.sock
 }
 
 function merge() {

@@ -10,6 +10,7 @@ RUN apk add --no-cache \
     docker-cli-compose \
     rsync \
     p7zip \
+    socat \
     util-linux \
     && rm -rf /var/cache/apk/*
 
