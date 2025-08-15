@@ -404,12 +404,16 @@ if ! nc -zv 127.0.0.1 2222 >/dev/null; then
         echo "SSH agent seems to not be running."
         exit 1
     fi
-    socat TCP-LISTEN:2222,bind=127.0.0.1,reuseaddr,fork UNIX-CONNECT:\$SSH_AUTH_SOCK > /dev/null &
+    echo "Starting SSH agent forwarding socket"
+    socat TCP-LISTEN:2222,bind=127.0.0.1,reuseaddr,fork UNIX-CONNECT:\$SSH_AUTH_SOCK > /dev/null 2>&1 &
+    sleep 5
 fi
 
 if ! nc -zv 127.0.0.1 2375 >/dev/null; then
     DOCKER_SOCK="\$(docker context inspect --format '{{(index .Endpoints.docker.Host)}}' | sed -e 's|^unix://||')"
-    socat TCP-LISTEN:2375,bind=127.0.0.1,reuseaddr,fork UNIX-CONNECT:\$DOCKER_SOCK > /dev/null &
+    echo "Starting docker forwarding socket"
+    socat TCP-LISTEN:2375,bind=127.0.0.1,reuseaddr,fork UNIX-CONNECT:\$DOCKER_SOCK > /dev/null 2>&1 &
+    sleep 5
 fi
 
 docker run "\${OPTS[@]}" "\$IMAGE" "\${PARAMETER[@]}"
