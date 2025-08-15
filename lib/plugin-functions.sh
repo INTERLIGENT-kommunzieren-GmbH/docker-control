@@ -401,7 +401,7 @@ OPTS=(
 
 NC_SSH_AGENT_CMD="docker run --rm --quiet --add-host host.docker.internal:host-gateway -it --entrypoint "/usr/bin/nc" "\$IMAGE" -zv host.docker.internal 2222"
 if ! \$NC_SSH_AGENT_CMD >/dev/null; then
-    if [[ -z "$SSH_AUTH_SOCK ]]; then
+    if [[ -z "\$SSH_AUTH_SOCK" ]]; then
         echo "SSH agent seems to not be running."
         exit 1
     fi
