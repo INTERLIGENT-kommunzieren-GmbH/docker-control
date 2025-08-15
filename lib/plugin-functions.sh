@@ -399,19 +399,17 @@ OPTS=(
     -e DOCKER_HOST=tcp://host.docker.internal:2375
 )
 
-NC_SSH_AGENT_CMD="docker run --rm --quiet --add-host host.docker.internal:host-gateway -it --entrypoint "/usr/bin/nc" "\$IMAGE" -zv host.docker.internal 2222"
-if ! \$NC_SSH_AGENT_CMD >/dev/null; then
+if ! nc -zv 127.0.0.1 2222 >/dev/null; then
     if [[ -z "\$SSH_AUTH_SOCK" ]]; then
         echo "SSH agent seems to not be running."
         exit 1
     fi
-    docker run --rm --name docker-plugin-ssh-agent -v "\$SSH_AUTH_SOCK":"/tmp/ssh-agent.sock" --detach --entrypoint "/usr/bin/socat" -p 127.0.0.1:2222:2222 "\$IMAGE" tcp-listen:2222,fork,reuseaddr unix-connect:/tmp/ssh-agent.sock 1>/dev/null
+    socat TCP-LISTEN:2222,bind=127.0.0.1,reuseaddr,fork UNIX-CONNECT:\$SSH_AUTH_SOCK > /dev/null &
 fi
 
-NC_DOCKER_CMD="docker run --rm --quiet --add-host host.docker.internal:host-gateway -it --entrypoint "/usr/bin/nc" "\$IMAGE" -zv host.docker.internal 2375"
-if ! \$NC_DOCKER_CMD >/dev/null; then
+if ! nc -zv 127.0.0.1 2375 >/dev/null; then
     DOCKER_SOCK="\$(docker context inspect --format '{{(index .Endpoints.docker.Host)}}' | sed -e 's|^unix://||')"
-    docker run --name docker-plugin-port -v "\$DOCKER_SOCK":/var/run/docker.sock --detach --restart always --entrypoint "/usr/bin/socat" -p 127.0.0.1:2375:2375 "\$IMAGE" tcp-listen:2375,fork,reuseaddr unix-connect:/var/run/docker.sock 1>/dev/null
+    socat TCP-LISTEN:2375,bind=127.0.0.1,reuseaddr,fork UNIX-CONNECT:\$DOCKER_SOCK > /dev/null &
 fi
 
 docker run "\${OPTS[@]}" "\$IMAGE" "\${PARAMETER[@]}"
