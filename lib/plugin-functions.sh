@@ -128,8 +128,7 @@ function _createNewRelease() {
         docker run \
             -u "$(id -u):$(id -g)" \
             --group-add www-data \
-            -v "\$SSH_AUTH_SOCK":"\$SSH_AUTH_SOCK" \
-            -e SSH_AUTH_SOCK="\$SSH_AUTH_SOCK" \
+            -e SSH_AUTH_PORT="$SSH_AUTH_PORT" \
             -v "$PROJECT_DIR/volumes/composer-cache:/var/www/.composer/cache" \
             -v "$WORKTREE_DIR":/var/www/html fduarte42/docker-php:"$PHP_VERSION" \
             composer i -o
@@ -364,6 +363,17 @@ function _install_plugin() {
     cat << EOF | tee "$DOCKER_CLI_PLUGIN_PATH/docker-control" 1>/dev/null
 #!/usr/bin/env bash
 
+if ! command -v nc &> /dev/null; then
+  echo "netcat (nc) not found in path"
+  exit 1
+fi
+
+if ! command -v socat &> /dev/null; then
+  echo "socat not found in path"
+  exit 1
+fi
+
+
 IMAGE="ghcr.io/interligent-kommunzieren-gmbh/docker-plugin:latest"
 PROJECT_DIR=\$(pwd)
 PARAMETER=()
@@ -384,6 +394,17 @@ while [[ \$# -gt 0 ]]; do
     esac
 done
 
+if ! nc -zv 127.0.0.1 2222 > /dev/null 2>&1; then
+  if [[ -z "\$SSH_AUTH_SOCK" ]]; then
+      echo "SSH agent seems to not be running."
+      exit 1
+  fi
+  echo "Starting SSH agent forwarding socket"
+  socat TCP-LISTEN:2222,bind=127.0.0.1,reuseaddr,fork UNIX-CONNECT:\$SSH_AUTH_SOCK > /dev/null 2>&1 &
+  sleep 5
+  sleep 1
+fi
+
 OPTS=(
     --rm -it
     --network host
@@ -391,6 +412,7 @@ OPTS=(
     -u "\$(id -u):\$(id -g)"
     -e UID="\$(id -u)"
     -e GID="\$(id -g)"
+    -e SSH_AUTH_PORT="host.docker.internal:2222"
     -v "\$PROJECT_DIR":"\$PROJECT_DIR"
     -w "\$PROJECT_DIR"
     -v "\$HOME/.docker/cli-plugins":"/cli-plugins"
@@ -398,16 +420,6 @@ OPTS=(
     -e PLUGIN_MOUNTS_DIR="\$HOME/.ik/docker-plugin-mounts"
     -e DOCKER_HOST=tcp://host.docker.internal:2375
 )
-
-if ! nc -zv 127.0.0.1 2222 > /dev/null 2>&1; then
-    if [[ -z "\$SSH_AUTH_SOCK" ]]; then
-        echo "SSH agent seems to not be running."
-        exit 1
-    fi
-    echo "Starting SSH agent forwarding socket"
-    socat TCP-LISTEN:2222,bind=127.0.0.1,reuseaddr,fork UNIX-CONNECT:\$SSH_AUTH_SOCK > /dev/null 2>&1 &
-    sleep 1
-fi
 
 if ! nc -zv 127.0.0.1 2375 > /dev/null 2>&1; then
     DOCKER_SOCK="\$(docker context inspect --format '{{(index .Endpoints.docker.Host)}}' | sed -e 's|^unix://||')"
@@ -479,8 +491,10 @@ EOF
       exit 0
     fi
 
-    socat UNIX-LISTEN:/tmp/ssh-agent.sock,fork,mode=666 TCP:host.docker.internal:2222 >/dev/null &
-    export SSH_AUTH_SOCK=/tmp/ssh-agent.sock
+    if [[ -z "$SSH_SOCK_PORT" ]]; then
+        socat UNIX-LISTEN:/tmp/ssh-agent.sock,fork,mode=666 TCP:"$SSH_SOCK_PORT" >/dev/null &
+        export SSH_AUTH_SOCK=/tmp/ssh-agent.sock
+    fi
 }
 
 function merge() {

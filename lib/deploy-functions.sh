@@ -47,8 +47,7 @@ function createDeploymentZip() {
     docker run \
         -u "$(id -u):$(id -g)" \
         --group-add www-data \
-        -v "\$SSH_AUTH_SOCK":"\$SSH_AUTH_SOCK" \
-        -e SSH_AUTH_SOCK="\$SSH_AUTH_SOCK" \
+        -e SSH_AUTH_PORT="$SSH_AUTH_PORT" \
         -v "$PROJECT_DIR/volumes/composer-cache:/var/www/.composer/cache" \
         -v "$PROJECT_DIR/deployments/$DEPLOYMENT":/var/www/html fduarte42/docker-php:"$PHP_VERSION" \
         composer i -o
