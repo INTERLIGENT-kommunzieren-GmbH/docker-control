@@ -2,9 +2,14 @@
 set -e
 
 IMAGE="ghcr.io/interligent-kommunzieren-gmbh/docker-plugin:latest"
+CLI_PLUGIN_PATH="$HOME/.docker/cli-plugins"
 
 # Pull only if newer
 docker pull "$IMAGE" --quiet > /dev/null 2>&1
+
+if [[ ! -d "$CLI_PLUGIN_PATH" ]]; then
+    mkdir -p "$CLI_PLUGIN_PATH"
+fi
 
 docker run --rm \
   -v "$HOME/.docker/cli-plugins":"/cli-plugins" \
