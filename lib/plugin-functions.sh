@@ -393,7 +393,7 @@ if ! command -v socat &> /dev/null; then
   exit 1
 fi
 
-DOCKER0_IP=$(docker network inspect bridge -f '{{range .IPAM.Config}}{{.Gateway}}{{end}}')
+DOCKER0_IP=\$(docker network inspect bridge -f '{{range .IPAM.Config}}{{.Gateway}}{{end}}')
 
 if [[ -z "\$DOCKER0_IP" ]]; then
     echo "Could not determine docker0 IP"
