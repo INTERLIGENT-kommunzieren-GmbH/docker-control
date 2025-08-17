@@ -140,6 +140,14 @@ function _createNewRelease() {
 
         git -C "$WORKTREE_DIR" add composer.lock
         git -C "$WORKTREE_DIR" commit -m "Add composer.lock for $RELEASE"
+
+        local COMPOSER_JSON
+        COMPOSER_JSON=$(cat "$WORKTREE_DIR/composer.json")
+        UPDATED_COMPOSER_JSON=$(echo "$COMPOSER_JSON" | jq --arg ver "$RELEASE" '.version = $ver')
+        echo "$UPDATED_COMPOSER_JSON" > "$WORKTREE_DIR/composer.json"
+
+        git -C "$WORKTREE_DIR" add composer.json
+        git -C "$WORKTREE_DIR" commit -m "Updated version in composer.json for $RELEASE"
     fi
 
     # Push to origin
