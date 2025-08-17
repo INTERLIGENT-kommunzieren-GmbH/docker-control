@@ -363,17 +363,6 @@ function _install_plugin() {
     cat << EOF | tee "$DOCKER_CLI_PLUGIN_PATH/docker-control" 1>/dev/null
 #!/usr/bin/env bash
 
-if ! command -v nc &> /dev/null; then
-  echo "netcat (nc) not found in path"
-  exit 1
-fi
-
-if ! command -v socat &> /dev/null; then
-  echo "socat not found in path"
-  exit 1
-fi
-
-
 IMAGE="ghcr.io/interligent-kommunzieren-gmbh/docker-plugin:latest"
 PROJECT_DIR=\$(pwd)
 PARAMETER=()
@@ -394,13 +383,30 @@ while [[ \$# -gt 0 ]]; do
     esac
 done
 
-if ! nc -zv 127.0.0.1 2222 > /dev/null 2>&1; then
+if ! command -v nc &> /dev/null; then
+  echo "netcat (nc) not found in path"
+  exit 1
+fi
+
+if ! command -v socat &> /dev/null; then
+  echo "socat not found in path"
+  exit 1
+fi
+
+DOCKER0_IP=$(docker network inspect bridge -f '{{range .IPAM.Config}}{{.Gateway}}{{end}}')
+
+if [[ -z "\$DOCKER0_IP" ]]; then
+    echo "Could not determine docker0 IP"
+    exit 1
+fi
+
+if ! nc -zv "\$DOCKER0_IP" 2222 > /dev/null 2>&1; then
   if [[ -z "\$SSH_AUTH_SOCK" ]]; then
       echo "SSH agent seems to not be running."
       exit 1
   fi
   echo "Starting SSH agent forwarding socket"
-  socat TCP-LISTEN:2222,bind=127.0.0.1,reuseaddr,fork UNIX-CONNECT:\$SSH_AUTH_SOCK > /dev/null 2>&1 &
+  socat TCP-LISTEN:2222,bind="\$DOCKER0_IP",reuseaddr,fork UNIX-CONNECT:\$SSH_AUTH_SOCK > /dev/null 2>&1 &
   sleep 5
   sleep 1
 fi
@@ -421,10 +427,10 @@ OPTS=(
     -e DOCKER_HOST=tcp://host.docker.internal:2375
 )
 
-if ! nc -zv 127.0.0.1 2375 > /dev/null 2>&1; then
+if ! nc -zv "\$DOCKER0_IP" 2375 > /dev/null 2>&1; then
     DOCKER_SOCK="\$(docker context inspect --format '{{(index .Endpoints.docker.Host)}}' | sed -e 's|^unix://||')"
     echo "Starting docker forwarding socket"
-    socat TCP-LISTEN:2375,bind=127.0.0.1,reuseaddr,fork UNIX-CONNECT:\$DOCKER_SOCK > /dev/null 2>&1 &
+    socat TCP-LISTEN:2375,bind="\$DOCKER0_IP",reuseaddr,fork UNIX-CONNECT:\$DOCKER_SOCK > /dev/null 2>&1 &
     sleep 1
 fi
 
