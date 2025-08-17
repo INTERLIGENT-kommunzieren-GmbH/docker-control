@@ -48,9 +48,11 @@ function createDeploymentZip() {
         -u "$(id -u):$(id -g)" \
         --group-add www-data \
         -e SSH_AUTH_PORT="$SSH_AUTH_PORT" \
+        -e SSH_AUTH_SOCK=/tmp/ssh-agent.sock \
+        --add-host "host.docker.internal:host-gateway" \
         -v "$PROJECT_DIR/volumes/composer-cache:/var/www/.composer/cache" \
         -v "$PROJECT_DIR/deployments/$DEPLOYMENT":/var/www/html fduarte42/docker-php:"$PHP_VERSION" \
-        composer i -o
+        bash -c "/docker-php-init; composer i -o"
 
     if [[ $(type -t "pre_deploy_encode_hook_$ENV") == "function" ]]; then
         DEPLOYMENT=$("pre_deploy_encode_hook_$ENV" "$ENV" "$BRANCH" "$DEPLOYMENT")

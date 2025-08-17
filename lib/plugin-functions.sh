@@ -129,9 +129,11 @@ function _createNewRelease() {
             -u "$(id -u):$(id -g)" \
             --group-add www-data \
             -e SSH_AUTH_PORT="$SSH_AUTH_PORT" \
+            -e SSH_AUTH_SOCK=/tmp/ssh-agent.sock \
+            --add-host "host.docker.internal:host-gateway" \
             -v "$PROJECT_DIR/volumes/composer-cache:/var/www/.composer/cache" \
             -v "$WORKTREE_DIR":/var/www/html fduarte42/docker-php:"$PHP_VERSION" \
-            composer i -o
+            bash -c "/docker-php-init; composer i -o"
 
         info "Cleaning up vendor folder"
         rm -rf "$WORKTREE_DIR/vendor"

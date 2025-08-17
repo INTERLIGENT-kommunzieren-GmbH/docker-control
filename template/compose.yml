@@ -130,6 +130,8 @@ services:
       - mail
       - phpmyadmin
     environment:
+      SSH_AUTH_PORT: ${SSH_AUTH_PORT}
+      SSH_AUTH_SOCK: /tmp/ssh-agent.sock
       APACHE_ALIAS: ${BASE_DOMAIN}
       APP_ENV: ${ENVIRONMENT}
       BASE_DOMAIN: ${BASE_DOMAIN}
