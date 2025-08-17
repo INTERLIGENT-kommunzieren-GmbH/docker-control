@@ -461,9 +461,9 @@ function _update() {
     BACKUP_DIR="${PROJECT_DIR}/backup_$(date +%Y%m%d%H%M%S)"
     mkdir -p "$BACKUP_DIR"
     text 'Creating backup {{ Foreground "14" "'"$(basename "$BACKUP_DIR")"'"}}'
-    rsync -a --quiet --exclude "backup_*" --exclude .git --exclude htdocs --exclude volumes "$PROJECT_DIR/" "$BACKUP_DIR/" 1>/dev/null
+    rsync -a --quiet --exclude "backup_*" --exclude .git --exclude htdocs --exclude logs --exclude volumes "$PROJECT_DIR/" "$BACKUP_DIR/" 1>/dev/null
     info "Updating project with current template"
-    rsync -a --quiet --exclude volumes "$TEMPLATE_DIR/" "$PROJECT_DIR/"
+    rsync -a --quiet --exclude logs --exclude volumes "$TEMPLATE_DIR/" "$PROJECT_DIR/"
     cat "$PROJECT_DIR"/.gitignore-dist >> "$PROJECT_DIR"/.gitignore
     sort -u "$PROJECT_DIR"/.gitignore -o "$PROJECT_DIR"/.gitignore
     rm "$PROJECT_DIR"/.gitignore-dist
