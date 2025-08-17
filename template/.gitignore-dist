@@ -1,1 +1,5 @@
 deployments
+htdocs
+logs
+releases
+volumes
