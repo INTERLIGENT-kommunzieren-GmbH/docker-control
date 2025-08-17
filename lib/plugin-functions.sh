@@ -455,7 +455,7 @@ function _update() {
     text 'Creating backup {{ Foreground "14" "'"$(basename "$BACKUP_DIR")"'"}}'
     rsync -a --quiet --exclude "backup_*" --exclude .git --exclude htdocs --exclude volumes "$PROJECT_DIR/" "$BACKUP_DIR/" 1>/dev/null
     info "Updating project with current template"
-    rsync -a --quiet "$TEMPLATE_DIR/" "$PROJECT_DIR/"
+    rsync -a --quiet --exclude volumes "$TEMPLATE_DIR/" "$PROJECT_DIR/"
     cat "$PROJECT_DIR"/.gitignore-dist >> "$PROJECT_DIR"/.gitignore
     sort -u "$PROJECT_DIR"/.gitignore -o "$PROJECT_DIR"/.gitignore
     rm "$PROJECT_DIR"/.gitignore-dist
