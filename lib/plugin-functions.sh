@@ -497,7 +497,7 @@ EOF
       exit 0
     fi
 
-    if [[ -z "$SSH_AUTH_PORT" ]]; then
+    if [[ -n "$SSH_AUTH_PORT" ]]; then
         socat UNIX-LISTEN:/tmp/ssh-agent.sock,fork,mode=666 TCP:"$SSH_AUTH_PORT" >/dev/null &
         export SSH_AUTH_SOCK=/tmp/ssh-agent.sock
     fi
