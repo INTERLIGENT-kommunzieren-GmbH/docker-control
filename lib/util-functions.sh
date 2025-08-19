@@ -113,6 +113,15 @@ function info() {
     text -f 12 "$@"
 }
 
+function printHelp() {
+    local TITLE=$1
+    local -n HELP_COMMANDS=$2
+
+    sub_headline "$1"
+    printf '%s\n' "${HELP_COMMANDS[@]}" | awk -F'\t' '{printf "%-30s %s\n", $1, $2}' | "$GUM_EXECUTABLE" style --foreground 12 --padding "0 0 0 2"
+    newline
+}
+
 function input() {
     local ALLOW_EMPTY=1
     local DEFAULT_VALUE=""

@@ -271,49 +271,56 @@ function dockerComposeIngress() {
 }
 
 function _help() {
-    local FIRST_COL_WIDTH=30
+    local COMMANDS
+    # shellcheck disable=SC2034
+    COMMANDS=(
+            $'add-deploy-config\tAdd deployment config'
+            $'build\tBuild containers'
+            $'create-control-script <name>\tCreate a custom control script'
+            $'console <container>\tEnter container console (defaults to php)'
+            $'deploy <env> <branch>\tDeploy branch to environment'
+            $'merge\tAutomatic branch merging'
+            $'help\tShow this help'
+            $'init\tInitialize empty directory with template'
+            $'install-plugin\tInstall docker plugin'
+            $'pull\tPull current container images'
+            $'pull-ingress\tPull current ingress images'
+            $'release\tCreate new release'
+            $'restart\tRestart project containers'
+            $'restart-ingress\tRestart ingress containers'
+            $'show-running\tShow running projects'
+            $'start\tStart project containers'
+            $'start-ingress\tStart ingress containers'
+            $'status\tShow status of project containers'
+            $'status-ingress\tShow status of ingress containers'
+            $'stop\tStop project containers'
+            $'stop-ingress\tStop ingress containers'
+            $'update\tUpdate docker plugin'
+            $'update-plugin\tUpdate project with current template'
+            $'version\tShow version information'
+    )
+    local OPTIONS
+    # shellcheck disable=SC2034
+    OPTIONS=(
+        $'-d|--dir\tProject directory (default: current directory)'
+    )
+
     headline "IK Docker Control $SERVICE"
     newline
-    sub_headline "Options"
-    info "  $(printf "%-${FIRST_COL_WIDTH}s\n" "-d|--dir") Project directory (default: current directory)"
-    newline
-    sub_headline "Commands"
-    info "  $(printf "%-${FIRST_COL_WIDTH}s\n" "add-deploy-config") Add deployment config"
-    info "  $(printf "%-${FIRST_COL_WIDTH}s\n" "build") Build containers"
-    info "  $(printf "%-${FIRST_COL_WIDTH}s\n" "create-control-script <name>") Create a custom control script"
-    info "  $(printf "%-${FIRST_COL_WIDTH}s\n" "console <container>") Enter container console (defaults to php)"
-    info "  $(printf "%-${FIRST_COL_WIDTH}s\n" "deploy <env> <branch>") Deploy branch to environment"
-    info "  $(printf "%-${FIRST_COL_WIDTH}s\n" "merge") Automatic branch merging"
-    info "  $(printf "%-${FIRST_COL_WIDTH}s\n" "help") Show this help"
-    info "  $(printf "%-${FIRST_COL_WIDTH}s\n" "init") Initialize empty directory with template"
-    info "  $(printf "%-${FIRST_COL_WIDTH}s\n" "install-plugin") Install docker plugin"
-    info "  $(printf "%-${FIRST_COL_WIDTH}s\n" "pull") Pull current container images"
-    info "  $(printf "%-${FIRST_COL_WIDTH}s\n" "pull-ingress") Pull current ingress images"
-    info "  $(printf "%-${FIRST_COL_WIDTH}s\n" "release") Create new release"
-    info "  $(printf "%-${FIRST_COL_WIDTH}s\n" "restart") Restart project containers"
-    info "  $(printf "%-${FIRST_COL_WIDTH}s\n" "restart-ingress") Restart ingress containers"
-    info "  $(printf "%-${FIRST_COL_WIDTH}s\n" "show-running") Show running projects"
-    info "  $(printf "%-${FIRST_COL_WIDTH}s\n" "start") Start project containers"
-    info "  $(printf "%-${FIRST_COL_WIDTH}s\n" "start-ingress") Start ingress containers"
-    info "  $(printf "%-${FIRST_COL_WIDTH}s\n" "status") Show status of project containers"
-    info "  $(printf "%-${FIRST_COL_WIDTH}s\n" "status-ingress") Show status of ingress containers"
-    info "  $(printf "%-${FIRST_COL_WIDTH}s\n" "stop") Stop project containers"
-    info "  $(printf "%-${FIRST_COL_WIDTH}s\n" "stop-ingress") Stop ingress containers"
-    info "  $(printf "%-${FIRST_COL_WIDTH}s\n" "update") Update docker plugin"
-    info "  $(printf "%-${FIRST_COL_WIDTH}s\n" "update-plugin") Update project with current template"
-    info "  $(printf "%-${FIRST_COL_WIDTH}s\n" "version") Show version information"
-    newline
+
+    printHelp "Options" OPTIONS
+    printHelp "Commands" COMMANDS
 
     if ls "$PROJECT_DIR"/control-scripts/*.sh 1> /dev/null 2>&1; then
-        sub_headline "Custom commands"
+        local SUB_COMMANDS=()
+        local COMMAND
+        local TAB=$'\t'
+
         for COMMAND in "$PROJECT_DIR"/control-scripts/*.sh; do
-            local SHORT_COMMAND
-            SHORT_COMMAND=$(basename "$COMMAND" .sh)
-            local DESCRIPTION
-            DESCRIPTION=$("$COMMAND" _desc_)
-            info "  $(printf "%-${FIRST_COL_WIDTH}s\n" "${SHORT_COMMAND}") ${DESCRIPTION}"
+            SUB_COMMANDS+=( "$(basename "$COMMAND" .sh)${TAB}$("$COMMAND" _desc_)" )
         done
-        newline
+
+        printHelp "Custom commands" SUB_COMMANDS
     fi
 }
 
