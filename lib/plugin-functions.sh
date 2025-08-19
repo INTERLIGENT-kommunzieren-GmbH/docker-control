@@ -25,7 +25,7 @@ function _createControlScript {
 #!/bin/bash
 set -e
 
-. "$LIB_DIR/util-functions.sh"
+. "\$LIB_DIR/util-functions.sh"
 
 if [[ "\$1" == "_desc_" ]]; then
     # output command description
@@ -317,7 +317,7 @@ function _help() {
         local TAB=$'\t'
 
         for COMMAND in "$PROJECT_DIR"/control-scripts/*.sh; do
-            SUB_COMMANDS+=( "$(basename "$COMMAND" .sh)${TAB}$("$COMMAND" _desc_)" )
+            SUB_COMMANDS+=( "$(basename "$COMMAND" .sh)${TAB}$(LIB_DIR="$LIB_DIR" "$COMMAND" _desc_)" )
         done
 
         printHelp "Custom commands" SUB_COMMANDS
