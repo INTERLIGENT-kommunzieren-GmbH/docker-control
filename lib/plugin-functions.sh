@@ -783,7 +783,7 @@ function parseArguments() {
                 COMMAND=$1
                 shift
                 if [[ -f "${PROJECT_DIR}/control-scripts/${COMMAND}.sh" ]]; then
-                    "${PROJECT_DIR}/control-scripts/${COMMAND}.sh" "$@"
+                    LIB_DIR="$LIB_DIR" "${PROJECT_DIR}/control-scripts/${COMMAND}.sh" "$@"
                     exit 0
                 else
                     critical "Invalid parameter: $COMMAND"
