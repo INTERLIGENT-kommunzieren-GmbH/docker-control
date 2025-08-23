@@ -401,31 +401,30 @@ while [[ \$# -gt 0 ]]; do
 done
 
 if ! command -v nc &> /dev/null; then
-  echo "netcat (nc) not found in path"
-  exit 1
-fi
-
-if ! command -v socat &> /dev/null; then
-  echo "socat not found in path"
-  exit 1
-fi
-
-DOCKER0_IP=\$(docker network inspect bridge -f '{{range .IPAM.Config}}{{.Gateway}}{{end}}')
-
-if [[ -z "\$DOCKER0_IP" ]]; then
-    echo "Could not determine docker0 IP"
+    echo "netcat (nc) not found in path"
     exit 1
 fi
 
-if ! nc -zv "\$DOCKER0_IP" 2222 > /dev/null 2>&1; then
-  if [[ -z "\$SSH_AUTH_SOCK" ]]; then
-      echo "SSH agent seems to not be running."
-      exit 1
-  fi
-  echo "Starting SSH agent forwarding socket"
-  socat TCP-LISTEN:2222,bind="\$DOCKER0_IP",reuseaddr,fork UNIX-CONNECT:\$SSH_AUTH_SOCK > /dev/null 2>&1 &
-  sleep 5
-  sleep 1
+if ! command -v socat &> /dev/null; then
+    echo "socat not found in path"
+    exit 1
+fi
+
+if ! nc -zv localhost 2222 > /dev/null 2>&1; then
+    if [[ -z "\$SSH_AUTH_SOCK" ]]; then
+        echo "SSH agent seems to not be running."
+        exit 1
+    fi
+    echo "Starting SSH agent forwarding socket"
+    socat TCP-LISTEN:2222,bind=localhost,reuseaddr,fork UNIX-CONNECT:\$SSH_AUTH_SOCK > /dev/null 2>&1 &
+    sleep 1
+
+    containers=\$(docker ps -q --filter "label=com.interligent.dockerplugin.service=php")
+    if [ -n "\$containers" ]; then
+        echo "restarting php containers to connect to new ssh agent port"
+        # shellcheck disable=SC2086
+        docker restart \$containers
+    fi
 fi
 
 OPTS=(
@@ -444,10 +443,10 @@ OPTS=(
     -e DOCKER_HOST=tcp://host.docker.internal:2375
 )
 
-if ! nc -zv "\$DOCKER0_IP" 2375 > /dev/null 2>&1; then
+if ! nc -zv localhost 2375 > /dev/null 2>&1; then
     DOCKER_SOCK="\$(docker context inspect --format '{{(index .Endpoints.docker.Host)}}' | sed -e 's|^unix://||')"
     echo "Starting docker forwarding socket"
-    socat TCP-LISTEN:2375,bind="\$DOCKER0_IP",reuseaddr,fork UNIX-CONNECT:\$DOCKER_SOCK > /dev/null 2>&1 &
+    socat TCP-LISTEN:2375,bind=localhost,reuseaddr,fork UNIX-CONNECT:\$DOCKER_SOCK > /dev/null 2>&1 &
     sleep 1
 fi
 

@@ -130,7 +130,7 @@ services:
       - mail
       - phpmyadmin
     environment:
-      SSH_AUTH_PORT: ${SSH_AUTH_PORT}
+      SSH_AUTH_PORT: host.docker.internal:2222
       SSH_AUTH_SOCK: /tmp/ssh-agent.sock
       APACHE_ALIAS: ${BASE_DOMAIN}
       APP_ENV: ${ENVIRONMENT}
