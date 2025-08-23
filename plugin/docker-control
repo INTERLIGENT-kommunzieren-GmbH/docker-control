@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 
-VERSION="DEV"
+VERSION="1.5.10"
 
 REAL_PATH="$(readlink -f "$0")"
 SCRIPT_DIR="$(dirname "$REAL_PATH")"
