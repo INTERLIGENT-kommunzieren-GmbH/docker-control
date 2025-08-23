@@ -18,6 +18,15 @@ This will install the plugin into `~/.ik-docker`, making it accessible with the 
 
 To use the plugin, invoke `docker control <command>`.
 
+### Global Options
+
+#### `--dir` / `-d <directory>`
+Specify the project directory (default: current directory).
+
+```bash
+docker control --dir /path/to/project <command>
+```
+
 ### Available Commands
 
 #### `add-deploy-config`
@@ -27,25 +36,21 @@ Add deployment configuration for environments.
 docker control add-deploy-config
 ```
 
-#### `build`
-Build the Docker containers for the project.
+#### `build [options]`
+Build the Docker containers for the project. Accepts all docker-compose build options.
 
 ```bash
 docker control build
+docker control build --no-cache
 ```
 
-#### `cap <env>`
-Deploy via capistrano to the specified environment.
+#### `console [container]`
+Open a bash shell inside a container. Defaults to the `php` container if no container name is provided. For the `php` container, opens as `www-data` user.
 
 ```bash
-docker control cap production
-```
-
-#### `console <container>`
-Open a bash shell inside a container. Defaults to the `php` container if no container name is provided.
-
-```bash
+docker control console
 docker control console php
+docker control console db
 ```
 
 #### `create-control-script <name>`
@@ -55,11 +60,12 @@ Create a custom control script with the specified name.
 docker control create-control-script my-command
 ```
 
-#### `deploy <env> <branch>`
-Deploy the specified branch to the specified environment.
+#### `deploy <env> [branch]`
+Deploy the specified branch to the specified environment. If no branch is specified, uses the default branch configured for the environment.
 
 ```bash
-docker control deploy production main
+docker control deploy production
+docker control deploy staging main
 ```
 
 #### `help`
@@ -70,14 +76,21 @@ docker control help
 ```
 
 #### `init`
-Initialize an empty directory with the project template, creating a `.env` file and setting up the PHP version and database port.
+Initialize an empty directory with the project template, creating a `.env` file and setting up the PHP version and database port. Only works in empty directories.
 
 ```bash
 docker control init
 ```
 
+#### `install-plugin`
+Install the Docker CLI plugin system-wide.
+
+```bash
+docker control install-plugin
+```
+
 #### `merge`
-Automatic branch merging between environments.
+Automatic branch merging between environments based on deployment configuration.
 
 ```bash
 docker control merge
@@ -97,18 +110,32 @@ Pull the latest ingress-related Docker images.
 docker control pull-ingress
 ```
 
+#### `release`
+Create a new release branch with automated versioning and composer.lock generation.
+
+```bash
+docker control release
+```
+
 #### `restart`
-Restart the project containers.
+Restart the project containers (stops and starts them).
 
 ```bash
 docker control restart
 ```
 
 #### `restart-ingress`
-Restart the ingress containers.
+Restart the ingress containers (stops and starts them).
 
 ```bash
 docker control restart-ingress
+```
+
+#### `show-running`
+Show all running projects managed by the Docker plugin.
+
+```bash
+docker control show-running
 ```
 
 #### `start`
@@ -154,10 +181,17 @@ docker control stop-ingress
 ```
 
 #### `update`
-Update the project with the current template, creating a backup of the existing files.
+Update the project with the current template, creating a backup of the existing files, then restart containers.
 
 ```bash
 docker control update
+```
+
+#### `update-plugin`
+Update the Docker plugin to the latest version.
+
+```bash
+docker control update-plugin
 ```
 
 #### `version`
@@ -193,3 +227,27 @@ info "Custom command executed"
 
 exit 0
 ```
+
+### Project Management
+
+The plugin requires projects to be managed by the Docker control plugin (identified by a `.managed-by-docker-control-plugin` file). Most commands will check for this file and exit with an error if the current directory is not a managed project.
+
+### Deployment Configuration
+
+The plugin supports deployment to multiple environments through a `.deploy.conf` file. This file is automatically created when you first run `add-deploy-config` and contains:
+
+- Environment-specific branch mappings
+- Merge stop configurations
+- User and domain settings for each environment
+- Service root paths
+
+The `merge` command uses this configuration to automatically merge branches between environments in the correct order.
+
+### Release Management
+
+The `release` command provides automated release branch creation with:
+
+- Automatic date-based versioning (YYYYMMDD_N format)
+- Composer.lock generation for releases
+- Version updates in composer.json
+- Git worktree management for safe release preparation
