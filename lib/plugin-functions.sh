@@ -17,11 +17,30 @@ function checkDir() {
 
 function _createControlScript {
     local COMMAND=$1
-    if [[ -f "${PROJECT_DIR}/control-scripts/${COMMAND}.sh" ]]; then
-        critical "command '$COMMAND' already exists in $PROJECT_DIR"
+    local CONTROL_SCRIPTS_DIR
+
+    # Check for .docker-control directory first, fallback to legacy location
+    if [[ -d "$PROJECT_DIR/htdocs/.docker-control/control-scripts" ]]; then
+        CONTROL_SCRIPTS_DIR="$PROJECT_DIR/htdocs/.docker-control/control-scripts"
+        # Ensure the directory is accessible
+        if [[ ! -w "$CONTROL_SCRIPTS_DIR" ]]; then
+            critical "Directory $CONTROL_SCRIPTS_DIR exists but is not writable"
+            exit 1
+        fi
+    else
+        CONTROL_SCRIPTS_DIR="$PROJECT_DIR/control-scripts"
+        # Create legacy directory if it doesn't exist
+        if ! mkdir -p "$CONTROL_SCRIPTS_DIR"; then
+            critical "Failed to create control scripts directory: $CONTROL_SCRIPTS_DIR"
+            exit 1
+        fi
+    fi
+
+    if [[ -f "${CONTROL_SCRIPTS_DIR}/${COMMAND}.sh" ]]; then
+        critical "command '$COMMAND' already exists in $CONTROL_SCRIPTS_DIR"
         exit 1
     else
-        cat << EOF | tee "$PROJECT_DIR/control-scripts/${COMMAND}.sh" 1>/dev/null
+        cat << EOF | tee "$CONTROL_SCRIPTS_DIR/${COMMAND}.sh" 1>/dev/null
 #!/bin/bash
 set -e
 
@@ -38,128 +57,45 @@ info "WAITING FOR IMPLEMENTATION"
 
 exit 0
 EOF
-        chmod u+x "$PROJECT_DIR/control-scripts/${COMMAND}.sh"
+        chmod u+x "$CONTROL_SCRIPTS_DIR/${COMMAND}.sh"
 
-        text 'command {{ Foreground "14" "'"$COMMAND"'"}} created under {{ Foreground "14" "'"$PROJECT_DIR"'"}}'
+        text 'command {{ Foreground "14" "'"$COMMAND"'"}} created under {{ Foreground "14" "'"$CONTROL_SCRIPTS_DIR"'"}}'
     fi
 }
 
 function _createNewRelease() {
-    local SRC_BRANCH
     local RELEASE
-    local TODAY
-    local BASE_TAG
-    local NEXT_INDEX
-    local EXISTING_TAGS
-    local REPO_DIR="$PROJECT_DIR/htdocs"
-    local WORKTREE_DIR
+    local CREATED_RELEASE
 
     sub_headline "create new release"
     newline
 
-    TODAY=$(date '+%Y%m%d')
-    git -C "$REPO_DIR" fetch --all --prune
+    RELEASE=$(select_release_tag 1)
 
-    EXISTING_TAGS=$(git -C "$REPO_DIR" branch -r --list "origin/releases/$TODAY*" \
-        | sed 's|.*/releases/||' | sed 's/\r//g' | sort)
-
-    NEXT_INDEX=1
-    if [[ -n "$EXISTING_TAGS" ]]; then
-        local max=0
-        while IFS= read -r tag; do
-            local idx="${tag##*_}"
-            if [[ "$idx" =~ ^[0-9]+$ ]] && (( idx > max )); then
-                max=$idx
-            fi
-        done <<< "$EXISTING_TAGS"
-        NEXT_INDEX=$((max + 1))
-    fi
-
-    BASE_TAG="${TODAY}_${NEXT_INDEX}"
-
-    input -l "source branch" -d "master" -r SRC_BRANCH
-    input -l "release tag" -d "$BASE_TAG" -r RELEASE
-
-    # 🔍 Check branch existence
-    if git -C "$REPO_DIR" show-ref --verify --quiet "refs/heads/releases/$RELEASE" \
-        || git -C "$REPO_DIR" show-ref --verify --quiet "refs/remotes/origin/releases/$RELEASE"; then
-        critical "Branch releases/$RELEASE already exists (local or remote)"
+    # Check if release selection was successful
+    if [[ $? -ne 0 ]] || [[ -z "$RELEASE" ]]; then
+        critical "Failed to select base release/tag"
         exit 1
     fi
 
-    WORKTREE_DIR="$PROJECT_DIR/releases/$RELEASE"
+    info "Selected base release/tag: $RELEASE"
+    newline
 
-    if [[ -d "$WORKTREE_DIR" ]]; then
-        critical "Worktree directory already exists: $WORKTREE_DIR"
-        exit 1
-    fi
-    if git -C "$REPO_DIR" worktree list | grep -q "releases/$RELEASE"; then
-        critical "Branch releases/$RELEASE is already checked out in another worktree"
-        exit 1
-    fi
+    # Call gitCreateRelease and check for success
+    if gitCreateRelease "$RELEASE"; then
+        # Get the created release from REPLY variable
+        CREATED_RELEASE="$REPLY"
 
-    # Ensure source branch up-to-date
-    git -C "$REPO_DIR" fetch origin "$SRC_BRANCH"
-    git -C "$REPO_DIR" branch -f "$SRC_BRANCH" "origin/$SRC_BRANCH"
-    git -C "$REPO_DIR" worktree prune
-
-    # Create worktree & branch
-    git -C "$REPO_DIR" worktree add -b "releases/$RELEASE" "$WORKTREE_DIR" "$SRC_BRANCH" \
-        || { critical "Failed to create worktree"; exit 1; }
-
-    if [[ ! -f "$WORKTREE_DIR/composer.lock" ]]; then
-        sub_headline "Create composer.lock"
-
-        info "Installing packages"
-        # shellcheck disable=SC2034
-        local BASE_DOMAIN
-        # shellcheck disable=SC2034
-        local ENVIRONMENT
-        # shellcheck disable=SC2034
-        local DB_HOST_PORT
-        local PHP_VERSION
-        # shellcheck disable=SC2034
-        local PROJECTNAME
-        # shellcheck disable=SC2034
-        local XDEBUG_IP
-        # shellcheck disable=SC2034
-        local IDE_KEY
-        . "$PROJECT_DIR"/.env
-        docker run \
-            -u "$(id -u):$(id -g)" \
-            --group-add www-data \
-            -e SSH_AUTH_PORT="$SSH_AUTH_PORT" \
-            -e SSH_AUTH_SOCK=/tmp/ssh-agent.sock \
-            --add-host "host.docker.internal:host-gateway" \
-            -v "$PROJECT_DIR/volumes/composer-cache:/var/www/.composer/cache" \
-            -v "$WORKTREE_DIR":/var/www/html fduarte42/docker-php:"$PHP_VERSION" \
-            bash -c "/docker-php-init; composer i -o"
-
-        info "Cleaning up vendor folder"
-        rm -rf "$WORKTREE_DIR/vendor"
-
-        git -C "$WORKTREE_DIR" add composer.lock
-        git -C "$WORKTREE_DIR" commit -m "Add composer.lock for $RELEASE"
-
-        local COMPOSER_JSON
-        COMPOSER_JSON=$(cat "$WORKTREE_DIR/composer.json")
-        UPDATED_COMPOSER_JSON=$(echo "$COMPOSER_JSON" | jq --arg ver "$RELEASE" '.version = $ver')
-        echo "$UPDATED_COMPOSER_JSON" > "$WORKTREE_DIR/composer.json"
-
-        git -C "$WORKTREE_DIR" add composer.json
-        git -C "$WORKTREE_DIR" commit -m "Updated version in composer.json for $RELEASE"
-    fi
-
-    # Push to origin
-    git -C "$WORKTREE_DIR" push -u origin "releases/$RELEASE"
-
-    info "Created and pushed release branch releases/$RELEASE (temporary worktree: $WORKTREE_DIR)"
-
-    # Remove worktree
-    if git -C "$REPO_DIR" worktree remove "$WORKTREE_DIR" --force; then
-        info "Temporary worktree removed"
+        if [[ -n "$CREATED_RELEASE" ]]; then
+            newline
+            info "Successfully created release: $CREATED_RELEASE"
+            text 'Release {{ Foreground "14" "'"$CREATED_RELEASE"'"}} has been created and is ready for use'
+        else
+            warning "Release creation completed but no release name was returned"
+        fi
     else
-        warning "Could not remove worktree automatically: $WORKTREE_DIR"
+        critical "Failed to create release"
+        exit 1
     fi
 }
 
@@ -183,37 +119,127 @@ function _console() {
 }
 
 function _deploy() {
-    if [[ -z "$DEPLOY_ENVS" ]]; then
-        if [[ ! -f "$PROJECT_DIR/.deploy.conf" ]]; then
-            createDeployConfig
-        fi
-        . "$PROJECT_DIR/.deploy.conf"
-    fi
-
+    local RELEASE
     local ENV="$1"
+
+    sub_headline "Deploy to Environment"
+    newline
+
+    # Validate environment parameter first
     if [[ -z "$ENV" ]]; then
         critical "Environment parameter missing"
         newline
-        text 'The following environments are configured: {{ Foreground "14" "'"${!DEPLOY_ENVS[*]}"'"}}'
-        exit 1
-    fi
-
-    if [[ -z "${DEPLOY_ENVS[$ENV]+set}" ]]; then
-        critical "Environment $ENV not configured"
+        text 'Usage: {{ Foreground "14" "docker control deploy <environment>" }}'
         newline
-        text 'The following environments are configured: {{ Foreground "14" "'"${!DEPLOY_ENVS[*]}"'"}}'
+        text 'Example: {{ Foreground "14" "docker control deploy production" }}'
         exit 1
     fi
 
+    # Load deployment configuration
+    if [[ -z "$DEPLOY_ENVS" ]]; then
+        if [[ ! -f "$PROJECT_DIR/.deploy.conf" ]]; then
+            info "No deployment configuration found. Creating one..."
+            createDeployConfig
+        fi
+
+        # Source the configuration file with error handling
+        if ! . "$PROJECT_DIR/.deploy.conf"; then
+            critical "Failed to load deployment configuration from $PROJECT_DIR/.deploy.conf"
+            critical "The configuration file may be malformed"
+            exit 1
+        fi
+    fi
+
+    # Validate that DEPLOY_ENVS was loaded properly
+    if [[ -z "$DEPLOY_ENVS" ]]; then
+        critical "Deployment configuration is empty or malformed"
+        critical "Please check $PROJECT_DIR/.deploy.conf"
+        exit 1
+    fi
+
+    # Check if the specified environment exists
+    if [[ -z "${DEPLOY_ENVS[$ENV]+set}" ]]; then
+        critical "Environment '$ENV' is not configured"
+        newline
+        if [[ ${#DEPLOY_ENVS[@]} -gt 0 ]]; then
+            text 'The following environments are configured: {{ Foreground "14" "'"${!DEPLOY_ENVS[*]}"'"}}'
+        else
+            text 'No environments are currently configured. Use {{ Foreground "14" "docker control add-deploy-config" }} to add one.'
+        fi
+        exit 1
+    fi
+
+    info "Deploying to environment: $ENV"
+    newline
+
+    # Load environment-specific configuration
     local BRANCH
-    local IS_MERGE_STOP
+    local ALLOW_BRANCH_DEPLOYMENT
     local USER
     local DOMAIN
-    local SERSERVICE_ROOT
-    eval "${DEPLOY_ENVS[$ENV]}"
+    local SERVICE_ROOT
 
-    local DEPLOY_BRANCH="${2:-$BRANCH}"
-    deploy "$ENV" "$USER" "$DOMAIN" "$SERSERVICE_ROOT" "$DEPLOY_BRANCH"
+    # Evaluate the environment configuration with error handling
+    if ! eval "${DEPLOY_ENVS[$ENV]}"; then
+        critical "Failed to load configuration for environment '$ENV'"
+        critical "The environment configuration may be malformed"
+        exit 1
+    fi
+
+    # Validate required configuration variables
+    if [[ -z "$USER" ]]; then
+        critical "USER not configured for environment '$ENV'"
+        exit 1
+    fi
+
+    if [[ -z "$DOMAIN" ]]; then
+        critical "DOMAIN not configured for environment '$ENV'"
+        exit 1
+    fi
+
+    if [[ -z "$SERVICE_ROOT" ]]; then
+        warning "SERVICE_ROOT not configured for environment '$ENV', using default: /var/www/html"
+        SERVICE_ROOT="/var/www/html"
+    fi
+
+    info "Configuration loaded:"
+    text "  • User: {{ Foreground \"14\" \"$USER\" }}"
+    text "  • Domain: {{ Foreground \"14\" \"$DOMAIN\" }}"
+    text "  • Service Root: {{ Foreground \"14\" \"$SERVICE_ROOT\" }}"
+    if [[ -n "$BRANCH" ]]; then
+        text "  • Default Branch: {{ Foreground \"14\" \"$BRANCH\" }}"
+    fi
+    newline
+
+    # Select release/tag for deployment
+    info "Selecting release for deployment..."
+    RELEASE=$(select_release_tag "$ALLOW_BRANCH_DEPLOYMENT")
+
+    # Check if release selection was successful
+    if [[ $? -ne 0 ]] || [[ -z "$RELEASE" ]]; then
+        critical "Failed to select release for deployment"
+        exit 1
+    fi
+
+    info "Selected release: $RELEASE"
+    newline
+
+    # Confirm deployment
+    if [[ $(confirm "Proceed with deployment of '$RELEASE' to '$ENV' environment?") != "y" ]]; then
+        info "Deployment cancelled"
+        exit 0
+    fi
+
+    # Execute deployment with error handling
+    info "Starting deployment..."
+    if deploy "$ENV" "$USER" "$DOMAIN" "$SERVICE_ROOT" "$RELEASE"; then
+        newline
+        info "Deployment completed successfully!"
+        text 'Release {{ Foreground "14" "'"$RELEASE"'"}} has been deployed to {{ Foreground "14" "'"$ENV"'"}} environment'
+    else
+        critical "Deployment failed"
+        exit 1
+    fi
 }
 
 function _showRunningProjects() {
@@ -235,9 +261,9 @@ function addDeployConfig() {
 
     local BRANCH
     input -l "branch" -d "env/$ENV" -r BRANCH
-    local IS_MERGE_STOP="n"
+    local ALLOW_BRANCH_DEPLOYMENT="n"
     if [[ -n "$BRANCH" ]]; then
-        IS_MERGE_STOP=$(confirm -n "Is this a merge stop?")
+        ALLOW_BRANCH_DEPLOYMENT=$(confirm -n "Is this an unstable environment?")
     fi
 
     local USER
@@ -247,7 +273,7 @@ function addDeployConfig() {
     input -n -l "server root" -d "/var/www/html" -r SERVICE_ROOT
 
     cat <<EOF | tee -a "$PROJECT_DIR/.deploy.conf" 1>/dev/null
-DEPLOY_ENVS["$ENV"]="BRANCH=$BRANCH IS_MERGE_STOP=$IS_MERGE_STOP USER=$USER DOMAIN=$DOMAIN SERVICE_ROOT=$SERVICE_ROOT"
+DEPLOY_ENVS["$ENV"]="BRANCH=$BRANCH ALLOW_BRANCH_DEPLOYMENT=$ALLOW_BRANCH_DEPLOYMENT USER=$USER DOMAIN=$DOMAIN SERVICE_ROOT=$SERVICE_ROOT"
 DEPLOY_ENVS_ORDER+=("$ENV")
 
 EOF
@@ -274,29 +300,29 @@ function _help() {
     local COMMANDS
     # shellcheck disable=SC2034
     COMMANDS=(
-            $'add-deploy-config\tAdd deployment config'
-            $'build\tBuild containers'
+            $'add-deploy-config\tAdd deployment configuration for environments'
+            $'build [options]\tBuild Docker containers (accepts docker-compose build options)'
+            $'console [container]\tEnter container console (defaults to php)'
             $'create-control-script <name>\tCreate a custom control script'
-            $'console <container>\tEnter container console (defaults to php)'
-            $'deploy <env> <branch>\tDeploy branch to environment'
-            $'merge\tAutomatic branch merging'
-            $'help\tShow this help'
-            $'init\tInitialize empty directory with template'
-            $'install-plugin\tInstall docker plugin'
-            $'pull\tPull current container images'
-            $'pull-ingress\tPull current ingress images'
-            $'release\tCreate new release'
-            $'restart\tRestart project containers'
-            $'restart-ingress\tRestart ingress containers'
-            $'show-running\tShow running projects'
+            $'deploy <env>\tDeploy selected release to specified environment'
+            $'help\tShow this help and project status'
+            $'init\tInitialize empty directory with project template'
+            $'install-plugin\tInstall Docker CLI plugin system-wide'
+            $'merge\tMerge release branch to main using cherry-pick'
+            $'pull\tPull latest Docker images for project containers'
+            $'pull-ingress\tPull latest ingress-related Docker images'
+            $'release\tCreate new release branch with automated versioning'
+            $'restart\tRestart project containers (stop and start)'
+            $'restart-ingress\tRestart ingress containers (stop and start)'
+            $'show-running\tShow all running Docker projects'
             $'start\tStart project containers'
             $'start-ingress\tStart ingress containers'
             $'status\tShow status of project containers'
             $'status-ingress\tShow status of ingress containers'
             $'stop\tStop project containers'
             $'stop-ingress\tStop ingress containers'
-            $'update\tUpdate docker plugin'
-            $'update-plugin\tUpdate project with current template'
+            $'update\tUpdate project with current template and restart'
+            $'update-plugin\tUpdate Docker plugin to latest version'
             $'version\tShow version information'
     )
     local OPTIONS
@@ -311,16 +337,146 @@ function _help() {
     printHelp "Options" OPTIONS
     printHelp "Commands" COMMANDS
 
-    if ls "$PROJECT_DIR"/control-scripts/*.sh 1> /dev/null 2>&1; then
+    # Check for control scripts in .docker-control directory first, then fallback to legacy location
+    local CONTROL_SCRIPTS_DIR=""
+    if [[ -d "$PROJECT_DIR/htdocs/.docker-control/control-scripts" ]] && [[ -r "$PROJECT_DIR/htdocs/.docker-control/control-scripts" ]] && ls "$PROJECT_DIR/htdocs/.docker-control/control-scripts"/*.sh 1> /dev/null 2>&1; then
+        CONTROL_SCRIPTS_DIR="$PROJECT_DIR/htdocs/.docker-control/control-scripts"
+    elif [[ -d "$PROJECT_DIR/control-scripts" ]] && [[ -r "$PROJECT_DIR/control-scripts" ]] && ls "$PROJECT_DIR"/control-scripts/*.sh 1> /dev/null 2>&1; then
+        CONTROL_SCRIPTS_DIR="$PROJECT_DIR/control-scripts"
+    fi
+
+    if [[ -n "$CONTROL_SCRIPTS_DIR" ]]; then
         local SUB_COMMANDS=()
         local COMMAND
         local TAB=$'\t'
 
-        for COMMAND in "$PROJECT_DIR"/control-scripts/*.sh; do
+        for COMMAND in "$CONTROL_SCRIPTS_DIR"/*.sh; do
             SUB_COMMANDS+=( "$(basename "$COMMAND" .sh)${TAB}$(LIB_DIR="$LIB_DIR" "$COMMAND" _desc_)" )
         done
 
         printHelp "Custom commands" SUB_COMMANDS
+    fi
+
+    # Add project status information
+    _showProjectStatus
+}
+
+function _showProjectStatus() {
+    sub_headline "Project Status"
+
+    # Project Directory Information
+    text "Project Directory: {{ Foreground \"14\" \"$PROJECT_DIR\" }}"
+
+    # Check if project is managed by docker control plugin
+    if [[ -f "$PROJECT_DIR/.managed-by-docker-control-plugin" ]]; then
+        text "Plugin Management: {{ Foreground \"10\" \"✓ Managed by Docker Control Plugin\" }}"
+    else
+        text "Plugin Management: {{ Foreground \"11\" \"✗ Not managed by Docker Control Plugin\" }}"
+        text "  Run {{ Foreground \"14\" \"docker control init\" }} to initialize this directory"
+    fi
+
+    # Git Repository Status
+    _showGitStatus
+
+    # Deployment Configuration Status
+    _showDeploymentStatus
+
+    # Docker Status
+    _showDockerStatus
+
+    newline
+}
+
+function _showGitStatus() {
+    local GIT_STATUS=""
+    local CURRENT_BRANCH=""
+    local GIT_REMOTE=""
+
+    if [[ -d "$PROJECT_DIR/htdocs/.git" ]]; then
+        # Get current branch
+        if CURRENT_BRANCH=$(git -C "$PROJECT_DIR/htdocs" branch --show-current 2>/dev/null); then
+            if [[ -n "$CURRENT_BRANCH" ]]; then
+                GIT_STATUS="on branch {{ Foreground \"14\" \"$CURRENT_BRANCH\" }}"
+
+                # Check if there are uncommitted changes
+                if ! git -C "$PROJECT_DIR/htdocs" diff-index --quiet HEAD -- 2>/dev/null; then
+                    GIT_STATUS="$GIT_STATUS {{ Foreground \"11\" \"(uncommitted changes)\" }}"
+                fi
+
+                # Check for remote tracking
+                if GIT_REMOTE=$(git -C "$PROJECT_DIR/htdocs" config --get "branch.$CURRENT_BRANCH.remote" 2>/dev/null); then
+                    GIT_STATUS="$GIT_STATUS, tracking {{ Foreground \"14\" \"$GIT_REMOTE\" }}"
+                fi
+            else
+                GIT_STATUS="{{ Foreground \"11\" \"detached HEAD\" }}"
+            fi
+        else
+            GIT_STATUS="{{ Foreground \"11\" \"unknown state\" }}"
+        fi
+        text "Git Repository: {{ Foreground \"10\" \"✓ Initialized\" }} ($GIT_STATUS)"
+    else
+        text "Git Repository: {{ Foreground \"11\" \"✗ Not a git repository\" }}"
+        text "  Initialize with {{ Foreground \"14\" \"git init\" }} in the htdocs directory"
+    fi
+}
+
+function _showDeploymentStatus() {
+    if [[ -f "$PROJECT_DIR/.deploy.conf" ]]; then
+        text "Deployment Config: {{ Foreground \"10\" \"✓ Configured\" }}"
+
+        # Load deployment configuration to show environments
+        local DEPLOY_ENVS_LOCAL
+        if . "$PROJECT_DIR/.deploy.conf" 2>/dev/null && [[ -n "$DEPLOY_ENVS" ]]; then
+            DEPLOY_ENVS_LOCAL=("${!DEPLOY_ENVS[@]}")
+            if [[ ${#DEPLOY_ENVS_LOCAL[@]} -gt 0 ]]; then
+                text "  Environments: {{ Foreground \"14\" \"${DEPLOY_ENVS_LOCAL[*]}\" }}"
+            else
+                text "  {{ Foreground \"11\" \"No environments configured\" }}"
+            fi
+        else
+            text "  {{ Foreground \"11\" \"Configuration file exists but is malformed\" }}"
+        fi
+    else
+        text "Deployment Config: {{ Foreground \"11\" \"✗ Not configured\" }}"
+        text "  Run {{ Foreground \"14\" \"docker control add-deploy-config\" }} to add deployment environments"
+    fi
+}
+
+function _showDockerStatus() {
+    local CONTAINER_COUNT=0
+    local RUNNING_COUNT=0
+    local PROJECT_CONTAINERS=""
+
+    # Check if Docker is available
+    if ! command -v docker &> /dev/null; then
+        text "Docker Status: {{ Foreground \"11\" \"✗ Docker not available\" }}"
+        return
+    fi
+
+    # Check if Docker daemon is running
+    if ! docker info &> /dev/null; then
+        text "Docker Status: {{ Foreground \"11\" \"✗ Docker daemon not running\" }}"
+        return
+    fi
+
+    # Get project containers
+    if PROJECT_CONTAINERS=$(docker ps -a --filter "label=com.interligent.dockerplugin.dir=$PROJECT_DIR" --format "{{.Names}}\t{{.Status}}" 2>/dev/null); then
+        if [[ -n "$PROJECT_CONTAINERS" ]]; then
+            CONTAINER_COUNT=$(echo "$PROJECT_CONTAINERS" | wc -l)
+            RUNNING_COUNT=$(echo "$PROJECT_CONTAINERS" | grep -c "Up" || true)
+
+            if [[ $RUNNING_COUNT -gt 0 ]]; then
+                text "Docker Status: {{ Foreground \"10\" \"✓ $RUNNING_COUNT/$CONTAINER_COUNT containers running\" }}"
+            else
+                text "Docker Status: {{ Foreground \"11\" \"○ $CONTAINER_COUNT containers stopped\" }}"
+                text "  Run {{ Foreground \"14\" \"docker control start\" }} to start containers"
+            fi
+        else
+            text "Docker Status: {{ Foreground \"11\" \"○ No project containers found\" }}"
+            text "  Run {{ Foreground \"14\" \"docker control start\" }} to create and start containers"
+        fi
+    else
+        text "Docker Status: {{ Foreground \"11\" \"✗ Unable to query container status\" }}"
     fi
 }
 
@@ -457,8 +613,260 @@ EOF
     exit
 }
 
-function _merge() {
-    merge
+function _mergeReleaseToMain() {
+    local RELEASE_BRANCH
+    local TARGET_BRANCH
+    local COMMITS_TO_CHERRY_PICK
+    local COMMIT_MESSAGE
+    local CHOICE
+    local RELEASE_WORKTREE_DIR
+    local TARGET_WORKTREE_DIR
+
+    sub_headline "Merge Release to Main"
+    newline
+
+    # Get the release branch using existing function
+    RELEASE_BRANCH=$(getLatestReleaseBranch)
+    if [[ $? -ne 0 ]] || [[ -z "$RELEASE_BRANCH" ]]; then
+        critical "Failed to select release branch"
+        exit 1
+    fi
+
+    info "Selected release branch: $RELEASE_BRANCH"
+
+    # Get the target branch using existing function
+    TARGET_BRANCH=$(getPrimaryBranch)
+    if [[ $? -ne 0 ]] || [[ -z "$TARGET_BRANCH" ]]; then
+        critical "Failed to determine target branch"
+        exit 1
+    fi
+
+    info "Target branch: $TARGET_BRANCH"
+    newline
+
+    # Set up worktree directories
+    RELEASE_WORKTREE_DIR="$PROJECT_DIR/releases/$RELEASE_BRANCH"
+    TARGET_WORKTREE_DIR="$PROJECT_DIR/releases/$TARGET_BRANCH"
+
+    # Create releases directory if it doesn't exist
+    mkdir -p "$PROJECT_DIR/releases"
+
+    # Create worktree for release branch
+    if ! _git worktree add "$RELEASE_WORKTREE_DIR" "$RELEASE_BRANCH"; then
+        critical "Error: Failed to create release worktree for $RELEASE_BRANCH"
+        exit 1
+    fi
+
+    # Create worktree for target branch
+    if ! _git worktree add "$TARGET_WORKTREE_DIR" "$TARGET_BRANCH"; then
+        critical "Error: Failed to create target worktree for $TARGET_BRANCH"
+        # Clean up release worktree
+        if ! _git worktree remove "$RELEASE_WORKTREE_DIR" --force; then
+            warning "Could not remove release worktree automatically: $RELEASE_WORKTREE_DIR"
+        fi
+        exit 1
+    fi
+
+    # Pull latest changes in target worktree
+    git -C "$TARGET_WORKTREE_DIR" pull origin "$TARGET_BRANCH"
+
+    # Get commits that exist in release branch but not in target branch
+    # Exclude commits with "release:" prefix in commit message
+    COMMITS_TO_CHERRY_PICK=$(git -C "$RELEASE_WORKTREE_DIR" log --reverse --pretty=format:"%H" "$TARGET_BRANCH".."$RELEASE_BRANCH" | while read -r commit_hash; do
+        commit_msg=$(git -C "$RELEASE_WORKTREE_DIR" log -1 --pretty=format:"%s" "$commit_hash")
+        if [[ ! "$commit_msg" =~ ^release: ]]; then
+            echo "$commit_hash"
+        fi
+    done)
+
+    if [[ -z "$COMMITS_TO_CHERRY_PICK" ]]; then
+        info "No commits to cherry-pick from $RELEASE_BRANCH to $TARGET_BRANCH"
+        # Clean up worktrees
+        if ! _git worktree remove "$RELEASE_WORKTREE_DIR" --force; then
+            warning "Could not remove release worktree automatically: $RELEASE_WORKTREE_DIR"
+        fi
+        if ! _git worktree remove "$TARGET_WORKTREE_DIR" --force; then
+            warning "Could not remove target worktree automatically: $TARGET_WORKTREE_DIR"
+        fi
+        return 0
+    fi
+
+    info "Found commits to cherry-pick:"
+    echo "$COMMITS_TO_CHERRY_PICK" | while read -r commit_hash; do
+        if [[ -n "$commit_hash" ]]; then
+            commit_msg=$(git -C "$RELEASE_WORKTREE_DIR" log -1 --pretty=format:"%s" "$commit_hash")
+            text "  • $commit_hash - $commit_msg"
+        fi
+    done
+    newline
+
+    # Confirm before proceeding
+    if [[ $(confirm "Proceed with cherry-picking these commits?") != "y" ]]; then
+        info "Cherry-pick operation cancelled"
+        # Clean up worktrees
+        if ! _git worktree remove "$RELEASE_WORKTREE_DIR" --force; then
+            warning "Could not remove release worktree automatically: $RELEASE_WORKTREE_DIR"
+        fi
+        if ! _git worktree remove "$TARGET_WORKTREE_DIR" --force; then
+            warning "Could not remove target worktree automatically: $TARGET_WORKTREE_DIR"
+        fi
+        return 0
+    fi
+
+    # Cherry-pick each commit in the target worktree
+    local COMMIT_ARRAY
+    mapfile -t COMMIT_ARRAY < <(echo "$COMMITS_TO_CHERRY_PICK")
+
+    for commit_hash in "${COMMIT_ARRAY[@]}"; do
+        if [[ -n "$commit_hash" ]]; then
+            COMMIT_MESSAGE=$(git -C "$TARGET_WORKTREE_DIR" log -1 --pretty=format:"%s" "$commit_hash")
+            info "Cherry-picking: $commit_hash - $COMMIT_MESSAGE"
+
+            if ! git -C "$TARGET_WORKTREE_DIR" cherry-pick "$commit_hash"; then
+                critical "Cherry-pick failed for commit: $commit_hash"
+                critical "Conflict detected. Choose an option:"
+                newline
+
+                # Offer conflict resolution options
+                local CONFLICT_OPTIONS
+                # shellcheck disable=SC2034
+                declare -A CONFLICT_OPTIONS=(
+                    ["Abort cherry-pick"]="abort"
+                    ["Start merge tool"]="mergetool"
+                )
+                # shellcheck disable=SC2034
+                local CONFLICT_ORDER=("Abort cherry-pick" "Start merge tool")
+
+                CHOICE=$(choose "Conflict resolution" CONFLICT_OPTIONS CONFLICT_ORDER)
+
+                if [[ "$CHOICE" == "abort" ]]; then
+                    git -C "$TARGET_WORKTREE_DIR" cherry-pick --abort
+                    critical "Cherry-pick operation aborted"
+                    # Clean up worktrees
+                    if ! _git worktree remove "$RELEASE_WORKTREE_DIR" --force; then
+                        warning "Could not remove release worktree automatically: $RELEASE_WORKTREE_DIR"
+                    fi
+                    if ! _git worktree remove "$TARGET_WORKTREE_DIR" --force; then
+                        warning "Could not remove target worktree automatically: $TARGET_WORKTREE_DIR"
+                    fi
+                    exit 1
+                elif [[ "$CHOICE" == "mergetool" ]]; then
+                    # Loop until conflicts are resolved or user aborts
+                    while true; do
+                        info "Starting merge tool in target worktree..."
+                        git -C "$TARGET_WORKTREE_DIR" mergetool
+
+                        # Check if conflicts are resolved by checking git status
+                        # Look for unmerged paths (UU, AA, DD) and also check for any remaining conflicted files
+                        local CONFLICT_STATUS
+                        CONFLICT_STATUS=$(git -C "$TARGET_WORKTREE_DIR" status --porcelain)
+
+                        if echo "$CONFLICT_STATUS" | grep -q "^UU\|^AA\|^DD"; then
+                            warning "Merge conflicts still exist. Choose an option:"
+                            # Show which files still have conflicts
+                            local CONFLICTED_FILES
+                            CONFLICTED_FILES=$(echo "$CONFLICT_STATUS" | grep "^UU\|^AA\|^DD" | cut -c4-)
+                            if [[ -n "$CONFLICTED_FILES" ]]; then
+                                text "Files with unresolved conflicts:"
+                                echo "$CONFLICTED_FILES" | while read -r file; do
+                                    text "  • $file"
+                                done
+                                newline
+                            fi
+                            newline
+
+                            # Offer options for remaining conflicts
+                            local RETRY_OPTIONS
+                            # shellcheck disable=SC2034
+                            declare -A RETRY_OPTIONS=(
+                                ["Try merge tool again"]="retry"
+                                ["Abort cherry-pick"]="abort"
+                            )
+                            # shellcheck disable=SC2034
+                            local RETRY_ORDER=("Try merge tool again" "Abort cherry-pick")
+
+                            local RETRY_CHOICE
+                            RETRY_CHOICE=$(choose "Conflict resolution" RETRY_OPTIONS RETRY_ORDER)
+
+                            if [[ "$RETRY_CHOICE" == "abort" ]]; then
+                                git -C "$TARGET_WORKTREE_DIR" cherry-pick --abort
+                                critical "Cherry-pick operation aborted"
+                                # Clean up worktrees
+                                if ! _git worktree remove "$RELEASE_WORKTREE_DIR" --force; then
+                                    warning "Could not remove release worktree automatically: $RELEASE_WORKTREE_DIR"
+                                fi
+                                if ! _git worktree remove "$TARGET_WORKTREE_DIR" --force; then
+                                    warning "Could not remove target worktree automatically: $TARGET_WORKTREE_DIR"
+                                fi
+                                exit 1
+                            fi
+                            # If retry is chosen, continue the loop
+                        else
+                            # All conflicts resolved, stage the resolved files
+                            info "All conflicts resolved. Staging resolved files..."
+                            if ! git -C "$TARGET_WORKTREE_DIR" add .; then
+                                critical "Failed to stage resolved files"
+                                # Clean up worktrees
+                                if ! _git worktree remove "$RELEASE_WORKTREE_DIR" --force; then
+                                    warning "Could not remove release worktree automatically: $RELEASE_WORKTREE_DIR"
+                                fi
+                                if ! _git worktree remove "$TARGET_WORKTREE_DIR" --force; then
+                                    warning "Could not remove target worktree automatically: $TARGET_WORKTREE_DIR"
+                                fi
+                                exit 1
+                            fi
+
+                            info "Continuing cherry-pick..."
+                            if ! git -C "$TARGET_WORKTREE_DIR" cherry-pick --continue; then
+                                critical "Failed to continue cherry-pick. Please resolve manually in $TARGET_WORKTREE_DIR"
+                                # Clean up worktrees
+                                if ! _git worktree remove "$RELEASE_WORKTREE_DIR" --force; then
+                                    warning "Could not remove release worktree automatically: $RELEASE_WORKTREE_DIR"
+                                fi
+                                if ! _git worktree remove "$TARGET_WORKTREE_DIR" --force; then
+                                    warning "Could not remove target worktree automatically: $TARGET_WORKTREE_DIR"
+                                fi
+                                exit 1
+                            fi
+
+                            # Push the resolved cherry-picked commit immediately
+                            info "Pushing resolved cherry-picked commit to remote..."
+                            if git -C "$TARGET_WORKTREE_DIR" push origin "$TARGET_BRANCH"; then
+                                info "Successfully pushed resolved commit $commit_hash to remote $TARGET_BRANCH"
+                            else
+                                warning "Failed to push resolved commit $commit_hash. Continuing with next commit..."
+                            fi
+                            break
+                        fi
+                    done
+                fi
+            else
+                info "Successfully cherry-picked: $commit_hash"
+
+                # Push the cherry-picked commit immediately
+                info "Pushing cherry-picked commit to remote..."
+                if git -C "$TARGET_WORKTREE_DIR" push origin "$TARGET_BRANCH"; then
+                    info "Successfully pushed commit $commit_hash to remote $TARGET_BRANCH"
+                else
+                    warning "Failed to push commit $commit_hash. Continuing with next commit..."
+                fi
+            fi
+        fi
+    done
+
+    info "Cherry-pick operation completed successfully"
+    info "All commits from $RELEASE_BRANCH have been merged and pushed to $TARGET_BRANCH"
+    newline
+
+    # Clean up worktrees
+    if ! _git worktree remove "$RELEASE_WORKTREE_DIR" --force; then
+        warning "Could not remove release worktree automatically: $RELEASE_WORKTREE_DIR"
+    fi
+    if ! _git worktree remove "$TARGET_WORKTREE_DIR" --force; then
+        warning "Could not remove target worktree automatically: $TARGET_WORKTREE_DIR"
+    fi
+
+    info "Worktrees cleaned up successfully"
 }
 
 function _update() {
@@ -519,122 +927,6 @@ EOF
     fi
 }
 
-function merge() {
-        if [[ -z "$DEPLOY_ENVS" ]]; then
-            if [[ ! -f "$PROJECT_DIR/.deploy.conf" ]]; then
-                createDeployConfig
-            fi
-            . "$PROJECT_DIR/.deploy.conf"
-        fi
-
-        local MERGE_STOPS=("development")
-        local MERGE_STOPS_REVERSE=("development")
-        local ENV
-        local ENV_BRANCHES=("development")
-        local ENV_BRANCHES_REVERSE=("development")
-
-        for ENV in "${!DEPLOY_ENVS_ORDER[@]}"; do
-            local BRANCH
-            local IS_MERGE_STOP
-            local USER
-            local DOMAIN
-            local SERSERVICE_ROOT
-            eval "${DEPLOY_ENVS[$ENV]}"
-
-            if [[ "$IS_MERGE_STOP" == "y" ]]; then
-                MERGE_STOPS+=("$BRANCH")
-                MERGE_STOPS_REVERSE=("$BRANCH" "${MERGE_STOPS[@]}")
-            fi
-
-            ENV_BRANCHES+=("$BRANCH")
-            ENV_BRANCHES_REVERSE=("$BRANCH" "${ENV_BRANCHES_REVERSE[@]}")
-        done
-
-        local MERGE_MENU_MAP
-        declare -A MERGE_MENU_MAP=(
-            ["quit"]=255
-        )
-        local MERGE_MENU_ORDER
-        declare -a MERGE_MENU_ORDER=(
-            "quit"
-        )
-
-        local MERGE_STOP
-        local PREVIOUS_MERGE_STOP=""
-        local MENU_ENTRY
-        for MERGE_STOP in "${MERGE_STOPS[@]}"; do
-            if [[ -n "$PREVIOUS_MERGE_STOP" ]]; then
-                MENU_ENTRY="merge $PREVIOUS_MERGE_STOP up to $MERGE_STOP"
-                # shellcheck disable=SC2034
-                MERGE_MENU_MAP["$MENU_ENTRY"]="$PREVIOUS_MERGE_STOP:$MERGE_STOP"
-                MERGE_MENU_ORDER+=("$MENU_ENTRY")
-            fi
-            PREVIOUS_MERGE_STOP="$MERGE_STOP"
-        done
-
-        MENU_ENTRY="merge ${MERGE_STOPS_REVERSE[0]} down to ${MERGE_STOPS[0]}"
-        # shellcheck disable=SC2034
-        MERGE_MENU_MAP["$MENU_ENTRY"]="development"
-        MERGE_MENU_ORDER+=("$MENU_ENTRY")
-
-        while true; do
-            newline
-
-            local ACTION
-            ACTION=$(choose "$HEADER" MERGE_MENU_MAP MERGE_MENU_ORDER)
-            local EXIT_CODE="$?"
-
-            if [ "$EXIT_CODE" == 255 ]; then
-                break
-            elif [ "$ACTION" == "development" ]; then
-                info "Merging ${ENV_BRANCHES_REVERSE[0]} down to ${ENV_BRANCHES[0]}"
-                local BRANCH
-                local PREVIOUS_BRANCH=""
-                for BRANCH in "${ENV_BRANCHES_REVERSE[@]}"; do
-                    git -C "$PROJECT_DIR/htdocs" switch "$BRANCH"
-                    git -C "$PROJECT_DIR/htdocs" pull
-
-                    if [[ -n "$PREVIOUS_BRANCH" ]]; then
-                        git -C "$PROJECT_DIR/htdocs" merge "$PREVIOUS_BRANCH"
-                        git -C "$PROJECT_DIR/htdocs" push
-                    fi
-
-                    PREVIOUS_BRANCH="$BRANCH"
-                done
-            else
-                local BOUNDARIES
-                # shellcheck disable=SC2206
-                BOUNDARIES=(${ACTION//:/ })
-
-                info "Merging ${BOUNDARIES[0]} up to ${BOUNDARIES[1]}"
-                local BRANCH
-                local PREVIOUS_BRANCH=""
-                local SKIP=1
-                for BRANCH in "${ENV_BRANCHES[@]}"; do
-                    if [[ "$BRANCH" == "${BOUNDARIES[0]}" ]]; then
-                        SKIP=0
-                    fi
-
-                    if [[ "$SKIP" == 0 ]]; then
-                        git -C "$PROJECT_DIR/htdocs" switch "$BRANCH"
-                        git -C "$PROJECT_DIR/htdocs" pull
-
-                        if [[ -n "$PREVIOUS_BRANCH" ]]; then
-                            git -C "$PROJECT_DIR/htdocs" merge "$PREVIOUS_BRANCH"
-                            git -C "$PROJECT_DIR/htdocs" push
-                        fi
-
-                        if [[ "$BRANCH" == "${BOUNDARIES[1]}" ]]; then
-                            break
-                        fi
-                    fi
-
-                    PREVIOUS_BRANCH="$BRANCH"
-                done
-            fi
-        done
-}
-
 function parseArguments() {
     if [[ "$1" == "control"  ]]; then
         # skip plugin command itself
@@ -686,7 +978,7 @@ function parseArguments() {
             merge)
                 checkDir
                 shift
-                _merge "$@"
+                _mergeReleaseToMain
                 exit 0
                 ;;
             help)
@@ -781,8 +1073,17 @@ function parseArguments() {
                 checkDir
                 COMMAND=$1
                 shift
-                if [[ -f "${PROJECT_DIR}/control-scripts/${COMMAND}.sh" ]]; then
-                    LIB_DIR="$LIB_DIR" "${PROJECT_DIR}/control-scripts/${COMMAND}.sh" "$@"
+
+                # Check for control scripts in .docker-control directory first, then fallback to legacy location
+                local CONTROL_SCRIPT_PATH=""
+                if [[ -f "$PROJECT_DIR/htdocs/.docker-control/control-scripts/${COMMAND}.sh" ]] && [[ -r "$PROJECT_DIR/htdocs/.docker-control/control-scripts/${COMMAND}.sh" ]]; then
+                    CONTROL_SCRIPT_PATH="$PROJECT_DIR/htdocs/.docker-control/control-scripts/${COMMAND}.sh"
+                elif [[ -f "${PROJECT_DIR}/control-scripts/${COMMAND}.sh" ]] && [[ -r "${PROJECT_DIR}/control-scripts/${COMMAND}.sh" ]]; then
+                    CONTROL_SCRIPT_PATH="${PROJECT_DIR}/control-scripts/${COMMAND}.sh"
+                fi
+
+                if [[ -n "$CONTROL_SCRIPT_PATH" ]]; then
+                    LIB_DIR="$LIB_DIR" "$CONTROL_SCRIPT_PATH" "$@"
                     exit 0
                 else
                     critical "Invalid parameter: $COMMAND"
@@ -835,5 +1136,27 @@ function select_php_version() {
     done
 
     choose "PHP Version" SERVICE_MAP SERVICE_ORDER
+}
+
+function select_release_tag() {
+    local INCLUDE_BRANCHES="$1"
+    local TAGS
+    TAGS="$(getAllTags "$INCLUDE_BRANCHES")"
+
+    local TAG_MAP
+    # shellcheck disable=SC2034
+    declare -A TAG_MAP=()
+    local TAG_ORDER
+    # shellcheck disable=SC2034
+    declare -a TAG_ORDER=()
+
+    IFS="$DEFAULT_IFS"
+    for TAG in $TAGS; do
+        # shellcheck disable=SC2034
+        TAG_MAP["$TAG"]="$TAG"
+        TAG_ORDER+=("$TAG")
+    done
+
+    choose "Previous Tag / Release Branch" TAG_MAP TAG_ORDER
 }
 

@@ -70,13 +70,31 @@ function createDeploymentZip() {
 
 function createDeploymentHooks() {
     local ENV="$1"
+    local DEPLOYMENT_SCRIPTS_DIR
 
-    if [[ -f "$PROJECT_DIR/deployments/scripts/$ENV.sh" ]]; then
-        critical "deployment hook for $ENV already created at $PROJECT_DIR/deployments/scripts/$ENV.sh"
+    # Check for .docker-control directory first, fallback to legacy location
+    if [[ -d "$PROJECT_DIR/htdocs/.docker-control/deployment-scripts" ]]; then
+        DEPLOYMENT_SCRIPTS_DIR="$PROJECT_DIR/htdocs/.docker-control/deployment-scripts"
+        # Ensure the directory is accessible
+        if [[ ! -w "$DEPLOYMENT_SCRIPTS_DIR" ]]; then
+            critical "Directory $DEPLOYMENT_SCRIPTS_DIR exists but is not writable"
+            exit 1
+        fi
+    else
+        DEPLOYMENT_SCRIPTS_DIR="$PROJECT_DIR/deployments/scripts"
+        # Create legacy directory if it doesn't exist
+        if ! mkdir -p "$DEPLOYMENT_SCRIPTS_DIR"; then
+            critical "Failed to create deployment scripts directory: $DEPLOYMENT_SCRIPTS_DIR"
+            exit 1
+        fi
+    fi
+
+    if [[ -f "$DEPLOYMENT_SCRIPTS_DIR/$ENV.sh" ]]; then
+        critical "deployment hook for $ENV already created at $DEPLOYMENT_SCRIPTS_DIR/$ENV.sh"
         exit 1
     fi
 
-    cat << EOF | tee "$PROJECT_DIR/deployments/scripts/${ENV}.sh" 1>/dev/null
+    cat << EOF | tee "$DEPLOYMENT_SCRIPTS_DIR/${ENV}.sh" 1>/dev/null
 #!/bin/bash
 set -e
 
@@ -161,11 +179,31 @@ function deploy() {
     local DEPLOYMENT_DIRECTORY
     DEPLOYMENT_DIRECTORY=$(basename "$DEPLOYMENT" .7z)
 
-    if [[ ! -f "$PROJECT_DIR/deployments/scripts/$ENV.sh" ]]; then
+    # Check for deployment scripts in .docker-control directory first, then fallback to legacy location
+    local DEPLOYMENT_SCRIPT_PATH=""
+    if [[ -f "$PROJECT_DIR/htdocs/.docker-control/deployment-scripts/$ENV.sh" ]] && [[ -r "$PROJECT_DIR/htdocs/.docker-control/deployment-scripts/$ENV.sh" ]]; then
+        DEPLOYMENT_SCRIPT_PATH="$PROJECT_DIR/htdocs/.docker-control/deployment-scripts/$ENV.sh"
+    elif [[ -f "$PROJECT_DIR/deployments/scripts/$ENV.sh" ]] && [[ -r "$PROJECT_DIR/deployments/scripts/$ENV.sh" ]]; then
+        DEPLOYMENT_SCRIPT_PATH="$PROJECT_DIR/deployments/scripts/$ENV.sh"
+    else
+        # Create deployment hooks if none exist
         createDeploymentHooks "$ENV"
+        # After creation, determine the path again
+        if [[ -d "$PROJECT_DIR/htdocs/.docker-control/deployment-scripts" ]]; then
+            DEPLOYMENT_SCRIPT_PATH="$PROJECT_DIR/htdocs/.docker-control/deployment-scripts/$ENV.sh"
+        else
+            DEPLOYMENT_SCRIPT_PATH="$PROJECT_DIR/deployments/scripts/$ENV.sh"
+        fi
+
+        # Verify the created script is readable
+        if [[ ! -r "$DEPLOYMENT_SCRIPT_PATH" ]]; then
+            critical "Created deployment script $DEPLOYMENT_SCRIPT_PATH is not readable"
+            exit 1
+        fi
     fi
+
     # shellcheck disable=SC1090
-    . "$PROJECT_DIR/deployments/scripts/$ENV.sh"
+    . "$DEPLOYMENT_SCRIPT_PATH"
 
     # copy deployment file to server
     copySSH "$USER" "$DOMAIN" "$DEPLOYMENT" "$SERVER_ROOT/releases/$DEPLOYMENT_FILENAME"

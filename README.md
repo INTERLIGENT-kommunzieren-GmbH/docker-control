@@ -12,7 +12,7 @@ To install the plugin, simply run the `install.sh` script, which will automatica
 curl -sL https://raw.githubusercontent.com/INTERLIGENT-kommunzieren-GmbH/docker-plugin/main/install.sh | bash
 ```
 
-This will install the plugin into `~/.ik-docker`, making it accessible with the `docker control` command.
+This will install the plugin into `~/.docker/cli-plugins`, making it accessible with the `docker control` command.
 
 ## Usage
 
@@ -60,16 +60,16 @@ Create a custom control script with the specified name.
 docker control create-control-script my-command
 ```
 
-#### `deploy <env> [branch]`
-Deploy the specified branch to the specified environment. If no branch is specified, uses the default branch configured for the environment.
+#### `deploy <env>`
+Deploy a selected release to the specified environment. The release/branch is selected interactively from available options. Includes comprehensive error handling, configuration validation, and deployment confirmation.
 
 ```bash
 docker control deploy production
-docker control deploy staging main
+docker control deploy staging
 ```
 
 #### `help`
-Show this help message with all available options and commands.
+Show help message with all available commands and comprehensive project status information including git repository state, deployment configuration, and Docker container status.
 
 ```bash
 docker control help
@@ -90,7 +90,7 @@ docker control install-plugin
 ```
 
 #### `merge`
-Automatic branch merging between environments based on deployment configuration.
+Merge release branch to main using selective cherry-pick workflow. Excludes release-specific commits (those with "release:" prefix) and provides interactive conflict resolution with merge tool support. Each commit is pushed immediately after successful cherry-pick.
 
 ```bash
 docker control merge
@@ -111,7 +111,7 @@ docker control pull-ingress
 ```
 
 #### `release`
-Create a new release branch with automated versioning and composer.lock generation.
+Create a new release branch with automated versioning and composer.lock generation. Includes comprehensive error handling, user feedback, and displays the created release information upon completion.
 
 ```bash
 docker control release
@@ -247,7 +247,79 @@ The `merge` command uses this configuration to automatically merge branches betw
 
 The `release` command provides automated release branch creation with:
 
-- Automatic date-based versioning (YYYYMMDD_N format)
+- Automatic semantic versioning (major.minor.x format)
 - Composer.lock generation for releases
 - Version updates in composer.json
 - Git worktree management for safe release preparation
+- Comprehensive error handling and user feedback
+
+### Project Status Information
+
+When you run `docker control help`, you'll see comprehensive project status information including:
+
+#### Project Directory Status
+- **Current project directory path**
+- **Plugin management status**: Whether the project is managed by the Docker control plugin
+- **Helpful guidance**: Commands to initialize unmanaged projects
+
+#### Git Repository Status
+- **Repository state**: Whether the project is a git repository
+- **Current branch**: Active branch name with tracking information
+- **Working directory status**: Indicates uncommitted changes
+- **Remote tracking**: Shows configured remote repositories
+
+#### Deployment Configuration Status
+- **Configuration file status**: Whether `.deploy.conf` exists and is valid
+- **Configured environments**: List of available deployment environments
+- **Configuration validation**: Alerts for malformed configuration files
+
+#### Docker Container Status
+- **Docker availability**: Whether Docker is installed and running
+- **Container status**: Number of project containers and their running state
+- **Quick actions**: Suggested commands based on current container state
+
+#### Status Indicators
+- **✓ Green checkmarks**: Properly configured and working features
+- **✗ Red X marks**: Missing or broken configurations
+- **○ Yellow circles**: Neutral states (e.g., stopped containers)
+
+### Enhanced Merge Workflow
+
+The `merge` command now uses an advanced cherry-pick workflow:
+
+#### Selective Cherry-Picking
+- **Smart filtering**: Automatically excludes release-specific commits (those with "release:" prefix)
+- **Commit isolation**: Uses git worktrees to isolate merge operations from your working directory
+- **Individual processing**: Each commit is cherry-picked and pushed individually for better tracking
+
+#### Interactive Conflict Resolution
+- **Automatic conflict detection**: Immediately identifies merge conflicts
+- **Merge tool integration**: Launches your configured git merge tool for conflict resolution
+- **Retry mechanism**: Allows multiple attempts at conflict resolution without losing progress
+- **User choice**: Option to abort or retry when conflicts remain unresolved
+
+#### Real-time Feedback
+- **Progress tracking**: Shows which commits are being processed
+- **Immediate push**: Each successful cherry-pick is pushed immediately to remote
+- **Clear status updates**: Detailed feedback throughout the merge process
+
+### Enhanced Deployment Workflow
+
+The `deploy` command includes significant improvements:
+
+#### Comprehensive Validation
+- **Environment validation**: Verifies deployment environment exists and is properly configured
+- **Configuration loading**: Robust loading and validation of deployment configuration files
+- **Required variables**: Validates all necessary deployment variables are present
+- **Interactive release selection**: Choose from available releases/branches for deployment
+
+#### Error Handling and Recovery
+- **Detailed error messages**: Specific guidance for different failure scenarios
+- **Configuration troubleshooting**: Helpful hints for fixing malformed configurations
+- **Graceful fallbacks**: Default values for optional configuration parameters
+- **Pre-deployment confirmation**: Review deployment details before execution
+
+#### User Experience Improvements
+- **Clear progress indicators**: Step-by-step feedback during deployment process
+- **Configuration display**: Shows deployment target and configuration before proceeding
+- **Success confirmation**: Clear indication of successful deployment completion
