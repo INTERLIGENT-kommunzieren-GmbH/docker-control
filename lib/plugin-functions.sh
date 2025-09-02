@@ -525,7 +525,7 @@ EOF
 }
 
 function _install_plugin() {
-    local DOCKER_CLI_PLUGIN_PATH="$HOME/.docker/cli-plugins"
+    local DOCKER_CLI_PLUGIN_PATH="/cli-plugins"
 
     if [[ -f "$DOCKER_CLI_PLUGIN_PATH/docker-control" ]]; then
         info "Removing old plugin"
@@ -534,8 +534,6 @@ function _install_plugin() {
 
     info "Installing plugin"
     cp "$DIR/plugin/docker-control-wrapper-script" "$DOCKER_CLI_PLUGIN_PATH/docker-control"
-
-EOF
     chmod 755 "$DOCKER_CLI_PLUGIN_PATH/docker-control"
     info "Installation successful. You can start using the plugin with: docker control help"
     exit
