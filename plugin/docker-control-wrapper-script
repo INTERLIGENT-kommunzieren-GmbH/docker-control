@@ -3,6 +3,7 @@
 IMAGE="ghcr.io/interligent-kommunzieren-gmbh/docker-plugin:latest"
 PROJECT_DIR=$(pwd)
 PARAMETER=()
+DEBUG_MODE=false
 while [[ $# -gt 0 ]]; do
     case "$1" in
         docker-cli-plugin-metadata)
@@ -12,6 +13,10 @@ while [[ $# -gt 0 ]]; do
         --dir|-d)
             shift
             PROJECT_DIR=$(realpath "$1")
+            shift
+            ;;
+        --debug)
+            DEBUG_MODE=true
             shift
             ;;
         *)
@@ -29,14 +34,14 @@ detect_platform() {
     if [[ "$(uname)" == "Darwin" ]]; then
         platform="macos"
         bind_ip="localhost"
-        echo "Detected macOS platform" >&2
+        [[ "$DEBUG_MODE" == "true" ]] && echo "Detected macOS platform" >&2
     # Check if running on Linux
     elif [[ "$(uname)" == "Linux" ]]; then
         # Check if running in WSL
         if grep -qi microsoft /proc/version 2>/dev/null || grep -qi wsl /proc/version 2>/dev/null; then
             platform="wsl"
             bind_ip="localhost"
-            echo "Detected WSL platform" >&2
+            [[ "$DEBUG_MODE" == "true" ]] && echo "Detected WSL platform" >&2
         # Check if Docker Desktop is running using docker info command
         elif docker info >/dev/null 2>&1; then
             local docker_info_output
@@ -49,7 +54,7 @@ detect_platform() {
                echo "$docker_info_output" | grep -qi "docker\.sock.*desktop\|docker.*desktop.*daemon"; then
                 platform="docker-desktop"
                 bind_ip="localhost"
-                echo "Detected Docker Desktop environment via docker info" >&2
+                [[ "$DEBUG_MODE" == "true" ]] && echo "Detected Docker Desktop environment via docker info" >&2
             else
                 # Additional check: look for typical Docker Desktop characteristics
                 # Docker Desktop often runs with specific storage drivers and configurations
@@ -69,7 +74,7 @@ detect_platform() {
                 if [[ "$is_desktop" == "true" ]]; then
                     platform="docker-desktop"
                     bind_ip="localhost"
-                    echo "Detected Docker Desktop environment via configuration analysis" >&2
+                    [[ "$DEBUG_MODE" == "true" ]] && echo "Detected Docker Desktop environment via configuration analysis" >&2
                 else
                     # Native Linux - try to detect docker0 bridge IP
                     platform="native-linux"
@@ -83,11 +88,11 @@ detect_platform() {
 
                     if [[ -n "$docker0_ip" && "$docker0_ip" != "127.0.0.1" ]]; then
                         bind_ip="$docker0_ip"
-                        echo "Detected native Linux with docker0 IP: $docker0_ip" >&2
+                        [[ "$DEBUG_MODE" == "true" ]] && echo "Detected native Linux with docker0 IP: $docker0_ip" >&2
                     else
                         # Fallback to localhost if docker0 IP detection fails
                         bind_ip="localhost"
-                        echo "Detected native Linux but failed to get docker0 IP, falling back to localhost" >&2
+                        [[ "$DEBUG_MODE" == "true" ]] && echo "Detected native Linux but failed to get docker0 IP, falling back to localhost" >&2
                     fi
                 fi
             fi
@@ -104,18 +109,18 @@ detect_platform() {
 
             if [[ -n "$docker0_ip" && "$docker0_ip" != "127.0.0.1" ]]; then
                 bind_ip="$docker0_ip"
-                echo "Detected native Linux (docker info failed) with docker0 IP: $docker0_ip" >&2
+                [[ "$DEBUG_MODE" == "true" ]] && echo "Detected native Linux (docker info failed) with docker0 IP: $docker0_ip" >&2
             else
                 # Fallback to localhost if docker0 IP detection fails
                 bind_ip="localhost"
-                echo "Detected native Linux (docker info failed) but failed to get docker0 IP, falling back to localhost" >&2
+                [[ "$DEBUG_MODE" == "true" ]] && echo "Detected native Linux (docker info failed) but failed to get docker0 IP, falling back to localhost" >&2
             fi
         fi
     else
         # Unknown platform, default to localhost
         platform="unknown"
         bind_ip="localhost"
-        echo "Unknown platform detected, using localhost" >&2
+        [[ "$DEBUG_MODE" == "true" ]] && echo "Unknown platform detected, using localhost" >&2
     fi
 
     echo "$platform:$bind_ip"
@@ -147,15 +152,14 @@ if ! command -v socat &> /dev/null; then
     exit 1
 fi
 
-# Check SSH agent forwarding - only detect platform if socket binding is needed
-if ! nc -zv localhost 2222 > /dev/null 2>&1; then
+# Check SSH agent forwarding - detect platform first to use correct binding IP for port check
+get_platform_info
+
+if ! nc -zv "$BIND_IP" 2222 > /dev/null 2>&1; then
     if [[ -z "$SSH_AUTH_SOCK" ]]; then
         echo "SSH agent seems to not be running."
         exit 1
     fi
-
-    # Get platform info only when needed for socket binding
-    get_platform_info
 
     echo "Starting SSH agent forwarding socket on $BIND_IP:2222"
     socat TCP-LISTEN:2222,bind="$BIND_IP",reuseaddr,fork UNIX-CONNECT:"$SSH_AUTH_SOCK" > /dev/null 2>&1 &
@@ -212,11 +216,8 @@ configure_docker_options() {
     )
 }
 
-# Check Docker socket forwarding - only detect platform if socket binding is needed
-if ! nc -zv localhost 2375 > /dev/null 2>&1; then
-    # Get platform info only when needed for socket binding
-    get_platform_info
-
+# Check Docker socket forwarding - use platform-specific binding IP for port check
+if ! nc -zv "$BIND_IP" 2375 > /dev/null 2>&1; then
     DOCKER_SOCK="$(docker context inspect --format '{{(index .Endpoints.docker.Host)}}' | sed -e 's|^unix://||')"
     echo "Starting docker forwarding socket on $BIND_IP:2375"
     socat TCP-LISTEN:2375,bind="$BIND_IP",reuseaddr,fork UNIX-CONNECT:"$DOCKER_SOCK" > /dev/null 2>&1 &
