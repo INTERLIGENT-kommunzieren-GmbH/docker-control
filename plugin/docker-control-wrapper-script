@@ -158,8 +158,9 @@ if ! nc -zv localhost 2222 > /dev/null 2>&1; then
     get_platform_info
 
     echo "Starting SSH agent forwarding socket on $BIND_IP:2222"
-    # shellcheck disable=SC1045
-    if ! socat TCP-LISTEN:2222,bind="$BIND_IP",reuseaddr,fork UNIX-CONNECT:"$SSH_AUTH_SOCK" > /dev/null 2>&1 &; then
+    socat TCP-LISTEN:2222,bind="$BIND_IP",reuseaddr,fork UNIX-CONNECT:"$SSH_AUTH_SOCK" > /dev/null 2>&1 &
+    # shellcheck disable=SC2181
+    if [[ $? -ne 0 ]]; then
         echo "ERROR: Failed to start SSH agent forwarding on $BIND_IP:2222"
         if [[ "$BIND_IP" != "localhost" ]]; then
             echo "Falling back to localhost binding"
@@ -218,7 +219,9 @@ if ! nc -zv localhost 2375 > /dev/null 2>&1; then
 
     DOCKER_SOCK="$(docker context inspect --format '{{(index .Endpoints.docker.Host)}}' | sed -e 's|^unix://||')"
     echo "Starting docker forwarding socket on $BIND_IP:2375"
-    if ! socat TCP-LISTEN:2375,bind="$BIND_IP",reuseaddr,fork UNIX-CONNECT:"$DOCKER_SOCK" > /dev/null 2>&1 &; then
+    socat TCP-LISTEN:2375,bind="$BIND_IP",reuseaddr,fork UNIX-CONNECT:"$DOCKER_SOCK" > /dev/null 2>&1 &
+    # shellcheck disable=SC2181
+    if [[ $? -ne 0 ]]; then
         echo "ERROR: Failed to start Docker forwarding on $BIND_IP:2375"
         if [[ "$BIND_IP" != "localhost" ]]; then
             echo "Falling back to localhost binding"
