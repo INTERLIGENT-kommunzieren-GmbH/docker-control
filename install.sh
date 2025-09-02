@@ -12,6 +12,6 @@ if [[ ! -d "$CLI_PLUGIN_PATH" ]]; then
 fi
 
 docker run --rm \
-  -v "$HOME/.docker/cli-plugins":"/cli-plugins" \
+  -v "$CLI_PLUGIN_PATH":"$CLI_PLUGIN_PATH" \
   -u "$(id -u):$(id -g)" \
   "$IMAGE" install-plugin </dev/null

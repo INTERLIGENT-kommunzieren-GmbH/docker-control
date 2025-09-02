@@ -525,7 +525,7 @@ EOF
 }
 
 function _install_plugin() {
-    local DOCKER_CLI_PLUGIN_PATH="/cli-plugins"
+    local DOCKER_CLI_PLUGIN_PATH="$HOME/.docker/cli-plugins"
 
     if [[ -f "$DOCKER_CLI_PLUGIN_PATH/docker-control" ]]; then
         info "Removing old plugin"
@@ -533,80 +533,8 @@ function _install_plugin() {
     fi
 
     info "Installing plugin"
-    cat << EOF | tee "$DOCKER_CLI_PLUGIN_PATH/docker-control" 1>/dev/null
-#!/usr/bin/env bash
+    cp "$DIR/plugin/docker-control-wrapper-script" "$DOCKER_CLI_PLUGIN_PATH/docker-control"
 
-IMAGE="ghcr.io/interligent-kommunzieren-gmbh/docker-plugin:latest"
-PROJECT_DIR=\$(pwd)
-PARAMETER=()
-while [[ \$# -gt 0 ]]; do
-    case "\$1" in
-        docker-cli-plugin-metadata)
-            docker run --rm "\$IMAGE" docker-cli-plugin-metadata
-            exit
-            ;;
-        --dir|-d)
-            shift
-            PROJECT_DIR=\$(realpath "\$1")
-            shift
-            ;;
-        *)
-            PARAMETER+=("\$1")
-            shift
-    esac
-done
-
-if ! command -v nc &> /dev/null; then
-    echo "netcat (nc) not found in path"
-    exit 1
-fi
-
-if ! command -v socat &> /dev/null; then
-    echo "socat not found in path"
-    exit 1
-fi
-
-if ! nc -zv localhost 2222 > /dev/null 2>&1; then
-    if [[ -z "\$SSH_AUTH_SOCK" ]]; then
-        echo "SSH agent seems to not be running."
-        exit 1
-    fi
-    echo "Starting SSH agent forwarding socket"
-    socat TCP-LISTEN:2222,bind=localhost,reuseaddr,fork UNIX-CONNECT:\$SSH_AUTH_SOCK > /dev/null 2>&1 &
-    sleep 1
-
-    containers=\$(docker ps -q --filter "label=com.interligent.dockerplugin.service=php")
-    if [ -n "\$containers" ]; then
-        echo "restarting php containers to connect to new ssh agent port"
-        # shellcheck disable=SC2086
-        docker restart \$containers
-    fi
-fi
-
-OPTS=(
-    --rm -it
-    --network host
-    --add-host host.docker.internal:host-gateway
-    -u "\$(id -u):\$(id -g)"
-    -e UID="\$(id -u)"
-    -e GID="\$(id -g)"
-    -e SSH_AUTH_PORT="host.docker.internal:2222"
-    -v "\$PROJECT_DIR":"\$PROJECT_DIR"
-    -w "\$PROJECT_DIR"
-    -v "\$HOME/.docker/cli-plugins":"/cli-plugins"
-    -v "\$HOME/.ik/docker-plugin-mounts":"/docker-plugin-mounts"
-    -e PLUGIN_MOUNTS_DIR="\$HOME/.ik/docker-plugin-mounts"
-    -e DOCKER_HOST=tcp://host.docker.internal:2375
-)
-
-if ! nc -zv localhost 2375 > /dev/null 2>&1; then
-    DOCKER_SOCK="\$(docker context inspect --format '{{(index .Endpoints.docker.Host)}}' | sed -e 's|^unix://||')"
-    echo "Starting docker forwarding socket"
-    socat TCP-LISTEN:2375,bind=localhost,reuseaddr,fork UNIX-CONNECT:\$DOCKER_SOCK > /dev/null 2>&1 &
-    sleep 1
-fi
-
-docker run "\${OPTS[@]}" "\$IMAGE" "\${PARAMETER[@]}"
 EOF
     chmod 755 "$DOCKER_CLI_PLUGIN_PATH/docker-control"
     info "Installation successful. You can start using the plugin with: docker control help"
