@@ -188,7 +188,21 @@ function gitCreateRelease() {
             # Patch Release Logic
             LATEST_PATCH="$(echo "$TAG" | awk -F. '{print $3}')"
             if [[ "$LATEST_PATCH" == "x" ]]; then
-                RELEASE="$LATEST_MAJOR.$LATEST_MINOR.0"
+                # When TAG is a branch name like "2.1.x", find the latest existing patch tag
+                # for this major.minor version and increment it
+                local EXISTING_PATCHES
+                mapfile -t EXISTING_PATCHES < <(_git tag -l | grep "^$LATEST_MAJOR\.$LATEST_MINOR\.[0-9]\+$" | sort -V)
+
+                if [[ ${#EXISTING_PATCHES[@]} -eq 0 ]]; then
+                    # No existing patches, start with .0
+                    RELEASE="$LATEST_MAJOR.$LATEST_MINOR.0"
+                else
+                    # Get the highest existing patch number and increment it
+                    local HIGHEST_PATCH_TAG="${EXISTING_PATCHES[-1]}"
+                    local HIGHEST_PATCH_NUM
+                    HIGHEST_PATCH_NUM="$(echo "$HIGHEST_PATCH_TAG" | awk -F. '{print $3}')"
+                    RELEASE="$LATEST_MAJOR.$LATEST_MINOR.$((HIGHEST_PATCH_NUM + 1))"
+                fi
             else
                 RELEASE="$LATEST_MAJOR.$LATEST_MINOR.$((LATEST_PATCH + 1))"
             fi
@@ -258,26 +272,29 @@ function gitCreateReleaseBranch() {
     # Generate and commit changelog for release branch
     sub_headline "Generating changelog for release branch $RELEASE"
 
-    # For release branches, we'll create a placeholder changelog entry
+    # For release branches, we'll create a branch-specific changelog entry
     local CHANGELOG_FILE="$WORKTREE_DIR/CHANGELOG.md"
     local RELEASE_DATE
     RELEASE_DATE=$(date '+%Y-%m-%d')
 
     if [ ! -f "$CHANGELOG_FILE" ]; then
-        # For initial release branch, create changelog with proper version format
-        local INITIAL_VERSION
-        if [[ "$RELEASE" =~ ^([0-9]+)\.([0-9]+)\.x$ ]]; then
-            # Convert 1.0.x to 1.0.0 for initial version
-            INITIAL_VERSION="${BASH_REMATCH[1]}.${BASH_REMATCH[2]}.0"
-        else
-            INITIAL_VERSION="$RELEASE"
-        fi
-
-        # Use the writeChangelogToFile function for consistency
-        writeChangelogToFile "$INITIAL_VERSION" "$WORKTREE_DIR"
+        # Create initial changelog file with branch entry (not version-specific)
+        {
+            echo "# Changelog"
+            echo ""
+            echo "All notable changes to this project will be documented in this file."
+            echo ""
+            echo "The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),"
+            echo "and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html)."
+            echo ""
+            echo "## [$RELEASE] - $RELEASE_DATE"
+            echo ""
+            echo "* Release branch created"
+            echo ""
+        } > "$CHANGELOG_FILE"
 
         git -C "$WORKTREE_DIR" add CHANGELOG.md
-        git -C "$WORKTREE_DIR" commit -m "release: Add initial changelog for $RELEASE"
+        git -C "$WORKTREE_DIR" commit -m "release: Add initial changelog for release branch $RELEASE"
         info "Created initial CHANGELOG.md for release branch $RELEASE"
     fi
 
@@ -462,15 +479,22 @@ function writeChangelogToFile() {
     local CHANGELOG_FILE="$WORKTREE_DIR/CHANGELOG.md"
     local TEMP_FILE="$WORKTREE_DIR/CHANGELOG.tmp"
 
+    # Clean up tag format for comparison (remove 'v' prefix if present)
+    local CLEAN_TAG="$TAG"
+    if [[ "$TAG" =~ ^v(.+)$ ]]; then
+        CLEAN_TAG="${BASH_REMATCH[1]}"
+    fi
+
     # Generate new changelog entry
     local NEW_ENTRY
     NEW_ENTRY=$(generateChangelogEntry "$TAG" "$WORKTREE_DIR")
 
     # Create or update CHANGELOG.md
     if [ -f "$CHANGELOG_FILE" ]; then
-        # Check if this version already exists in the changelog
-        if grep -q "## \[$TAG\]" "$CHANGELOG_FILE"; then
-            info "Entry for $TAG already exists in CHANGELOG.md, skipping"
+        # Check if this exact version already exists in the changelog
+        # Use the clean tag for comparison to handle both v1.0.0 and 1.0.0 formats
+        if grep -q "## \[$CLEAN_TAG\]" "$CHANGELOG_FILE"; then
+            info "Entry for $CLEAN_TAG already exists in CHANGELOG.md, skipping"
             return 0
         fi
 
@@ -483,7 +507,7 @@ function writeChangelogToFile() {
             sed -n '/^## \[/,$p' "$CHANGELOG_FILE"
         } > "$TEMP_FILE"
         mv "$TEMP_FILE" "$CHANGELOG_FILE"
-        info "Updated existing CHANGELOG.md with entry for $TAG"
+        info "Updated existing CHANGELOG.md with entry for $CLEAN_TAG"
     else
         # Create new changelog file
         {
@@ -496,7 +520,7 @@ function writeChangelogToFile() {
             echo ""
             echo "$NEW_ENTRY"
         } > "$CHANGELOG_FILE"
-        info "Created new CHANGELOG.md with entry for $TAG"
+        info "Created new CHANGELOG.md with entry for $CLEAN_TAG"
     fi
 }
 

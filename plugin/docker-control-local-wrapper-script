@@ -23,6 +23,31 @@ while [[ $# -gt 0 ]]; do
             DEBUG_MODE=true
             shift
             ;;
+        --reset)
+            if [[ -f "$PROJECT_DIR/.managed-by-docker-control-plugin" ]]; then
+                GIT_URL=$(git -C "$PROJECT_DIR/htdocs" config --get remote.origin.url)
+                if [[ -n "$GIT_URL" ]]; then
+                    echo "removing repo"
+                    sudo rm -rf "$PROJECT_DIR/htdocs"
+                    echo "removing old release worktrees"
+                    sudo rm -rfv "$PROJECT_DIR/releases/*"
+                    echo "cloning $GIT_URL"
+                    git clone "$GIT_URL" htdocs
+                    chmod 777 htdocs
+                    echo
+                    echo "local repository reset. Remote branches/tags need to be removed manually."
+                else
+                    echo
+                    echo "No git remote url found"
+                    exit 1
+                fi
+            else
+                echo
+                echo "directory not managed by docker control plugin"
+                exit 1
+            fi
+            exit 0
+            ;;
         *)
             PARAMETER+=("$1")
             shift
