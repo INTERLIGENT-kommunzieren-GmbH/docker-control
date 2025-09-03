@@ -337,6 +337,22 @@ function gitCreateTag() {
         exit 1
     fi
 
+    # Fetch latest remote state and sync the worktree
+    info "Fetching latest remote state and syncing worktree"
+    git -C "$WORKTREE_DIR" fetch --all --tags
+    git -C "$WORKTREE_DIR" reset --hard "origin/$BRANCH_NAME"
+
+    # Update composer.json with the tag version
+    sub_headline "Updating composer.json version for $RELEASE"
+
+    local COMPOSER_JSON
+    COMPOSER_JSON=$(cat "$WORKTREE_DIR/composer.json")
+    UPDATED_COMPOSER_JSON=$(echo "$COMPOSER_JSON" | jq --arg ver "$RELEASE" '.version = $ver')
+    echo "$UPDATED_COMPOSER_JSON" > "$WORKTREE_DIR/composer.json"
+
+    git -C "$WORKTREE_DIR" add composer.json
+    git -C "$WORKTREE_DIR" commit -m "release: Updated version in composer.json for $RELEASE"
+
     # Generate and commit changelog before creating tag
     sub_headline "Generating changelog for $RELEASE"
 
@@ -438,25 +454,55 @@ function generateChangelogEntry() {
     local CURRENT_COMMIT
     CURRENT_COMMIT=$(git -C "$WORKTREE_DIR" rev-parse HEAD)
 
-    # If tag exists, use it; otherwise use current HEAD
+    # For tag creation, we use current HEAD since the tag doesn't exist yet
+    # If tag exists (for existing tag changelog generation), use it
     if git -C "$WORKTREE_DIR" rev-parse --verify "$TAG" >/dev/null 2>&1; then
         CURRENT_COMMIT=$(git -C "$WORKTREE_DIR" rev-parse "$TAG")
     fi
 
     # Find the previous tag by looking at tags that are ancestors of current commit
+    # but exclude the current tag itself
     for tag in $ALL_TAGS; do
-        if git -C "$WORKTREE_DIR" merge-base --is-ancestor "$tag" "$CURRENT_COMMIT" 2>/dev/null; then
-            PREVIOUS_TAG="$tag"
+        if [[ "$tag" != "$TAG" ]] && [[ "$tag" != "$CLEAN_TAG" ]]; then
+            if git -C "$WORKTREE_DIR" merge-base --is-ancestor "$tag" "$CURRENT_COMMIT" 2>/dev/null; then
+                PREVIOUS_TAG="$tag"
+            fi
         fi
     done
 
     # Generate changelog content
     if [ -z "$PREVIOUS_TAG" ]; then
-        # First tag - show all commits from primary branch to current commit
-        CHANGELOG_CONTENT=$(git -C "$WORKTREE_DIR" log "$CURRENT_COMMIT" --pretty=format:"* %h - %s (%an, %ad)" --date=short --no-merges)
+        # First tag - show commits added to the release branch from branch creation to current tag
+        # Find the merge base with primary branch (this is where the release branch started)
+        local BRANCH_POINT=""
+        if git -C "$WORKTREE_DIR" rev-parse --verify "origin/$PRIMARY_BRANCH" >/dev/null 2>&1; then
+            BRANCH_POINT=$(git -C "$WORKTREE_DIR" merge-base "origin/$PRIMARY_BRANCH" "$CURRENT_COMMIT" 2>/dev/null || echo "")
+        elif git -C "$WORKTREE_DIR" rev-parse --verify "$PRIMARY_BRANCH" >/dev/null 2>&1; then
+            BRANCH_POINT=$(git -C "$WORKTREE_DIR" merge-base "$PRIMARY_BRANCH" "$CURRENT_COMMIT" 2>/dev/null || echo "")
+        fi
+
+        if [ -n "$BRANCH_POINT" ]; then
+            # Show commits added to the release branch from branch point to current tag, excluding release preparation commits
+            CHANGELOG_CONTENT=$(git -C "$WORKTREE_DIR" log "$BRANCH_POINT".."$CURRENT_COMMIT" --pretty=format:"* %h - %s (%an, %ad)" --date=short --no-merges | \
+                grep -v "release: " || echo "")
+
+            # Debug: log the commit range being used
+            info "Generating changelog for first tag: using commit range $BRANCH_POINT..$CURRENT_COMMIT"
+        else
+            # Fallback: show all commits up to current tag, excluding release preparation commits
+            CHANGELOG_CONTENT=$(git -C "$WORKTREE_DIR" log "$CURRENT_COMMIT" --pretty=format:"* %h - %s (%an, %ad)" --date=short --no-merges | \
+                grep -v "release: " || echo "")
+
+            # Debug: log fallback usage
+            info "Generating changelog for first tag: using fallback - all commits up to $CURRENT_COMMIT"
+        fi
     else
-        # Show commits between previous tag and current commit
-        CHANGELOG_CONTENT=$(git -C "$WORKTREE_DIR" log "$PREVIOUS_TAG".."$CURRENT_COMMIT" --pretty=format:"* %h - %s (%an, %ad)" --date=short --no-merges)
+        # Subsequent tags - show commits between previous tag and current tag, excluding release preparation commits
+        CHANGELOG_CONTENT=$(git -C "$WORKTREE_DIR" log "$PREVIOUS_TAG".."$CURRENT_COMMIT" --pretty=format:"* %h - %s (%an, %ad)" --date=short --no-merges | \
+            grep -v "release: " || echo "")
+
+        # Debug: log the commit range being used
+        info "Generating changelog for subsequent tag: using commit range $PREVIOUS_TAG..$CURRENT_COMMIT"
     fi
 
     # Format the changelog entry with header
@@ -536,13 +582,27 @@ function commitChangelog() {
         if git -C "$WORKTREE_DIR" commit -m "release: update changelog"; then
             info "Committed CHANGELOG.md to release branch"
 
-            # Push the changes to remote repository
-            if git -C "$WORKTREE_DIR" push; then
-                info "Successfully pushed changelog changes to remote repository"
+            # Sync with remote before pushing
+            local CURRENT_BRANCH
+            CURRENT_BRANCH=$(git -C "$WORKTREE_DIR" branch --show-current)
+
+            info "Syncing with remote branch before pushing changelog changes"
+            if git -C "$WORKTREE_DIR" pull --rebase origin "$CURRENT_BRANCH"; then
+                info "Successfully synced with remote branch"
+
+                # Push the changes to remote repository with upstream tracking
+                if git -C "$WORKTREE_DIR" push --set-upstream origin "$CURRENT_BRANCH"; then
+                    info "Successfully pushed changelog changes to remote repository"
+                else
+                    warning "Failed to push changelog changes to remote repository"
+                    warning "The changelog was committed locally but may not be available on the remote"
+                    warning "You may need to manually push the changes later"
+                fi
             else
-                warning "Failed to push changelog changes to remote repository"
-                warning "The changelog was committed locally but may not be available on the remote"
-                warning "You may need to manually push the changes later"
+                warning "Failed to sync with remote branch"
+                warning "There may be conflicts that need manual resolution"
+                warning "The changelog was committed locally but could not be pushed"
+                warning "Please manually resolve conflicts and push the changes"
             fi
         else
             warning "Failed to commit CHANGELOG.md"

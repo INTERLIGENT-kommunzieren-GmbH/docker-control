@@ -27,10 +27,12 @@ while [[ $# -gt 0 ]]; do
             if [[ -f "$PROJECT_DIR/.managed-by-docker-control-plugin" ]]; then
                 GIT_URL=$(git -C "$PROJECT_DIR/htdocs" config --get remote.origin.url)
                 if [[ -n "$GIT_URL" ]]; then
-                    echo "removing repo"
-                    sudo rm -rf "$PROJECT_DIR/htdocs"
+                    echo "emptying htdocs"
+                    shopt -s dotglob
+                    sudo rm -rf "$PROJECT_DIR/htdocs"/*
+                    shopt -u dotglob
                     echo "removing old release worktrees"
-                    sudo rm -rfv "$PROJECT_DIR/releases/*"
+                    sudo rm -rfv "$PROJECT_DIR/releases"/*
                     echo "cloning $GIT_URL"
                     git clone "$GIT_URL" htdocs
                     chmod 777 htdocs
