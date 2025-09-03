@@ -876,6 +876,11 @@ function parseArguments() {
         shift
     fi
 
+    if [[ "$1" == "controllocal"  ]]; then
+        # skip plugin command itself
+        shift
+    fi
+
     if [[ $# -eq 0 ]]; then
         # show help page as no parameters where given
         _help
