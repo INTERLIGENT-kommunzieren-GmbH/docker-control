@@ -73,9 +73,26 @@ function _createNewRelease() {
     RELEASE=$(select_release_tag 1)
 
     # Check if release selection was successful
-    if [[ $? -ne 0 ]] || [[ -z "$RELEASE" ]]; then
+    if [[ $? -ne 0 ]]; then
         critical "Failed to select base release/tag"
         exit 1
+    fi
+
+    # Handle special case for initial release
+    if [[ "$RELEASE" == "INITIAL_RELEASE" ]]; then
+        info "No base release specified - will create initial release"
+
+        # Directly create initial release without calling gitCreateRelease
+        # to avoid the getLatestTags call that causes authentication issues
+        local INITIAL_RELEASE="1.0.x"
+        if gitCreateReleaseBranch "$INITIAL_RELEASE"; then
+            info "Successfully created initial release: $INITIAL_RELEASE"
+            text 'Release {{ Foreground "14" "'"$INITIAL_RELEASE"'"}} has been created and is ready for use'
+            return 0
+        else
+            critical "Failed to create initial release"
+            exit 1
+        fi
     fi
 
     info "Selected base release/tag: $RELEASE"
@@ -1067,7 +1084,49 @@ function select_php_version() {
 function select_release_tag() {
     local INCLUDE_BRANCHES="$1"
     local TAGS
-    TAGS="$(getAllTags "$INCLUDE_BRANCHES")"
+    local NEED_MANUAL_INPUT=false
+    local ERROR_MESSAGE=""
+
+    # Try to get tags, but handle potential Git/authentication errors
+    if ! TAGS="$(getLatestTags "$INCLUDE_BRANCHES" 2>/dev/null)"; then
+        NEED_MANUAL_INPUT=true
+        ERROR_MESSAGE="Failed to fetch tags from repository (authentication or Git configuration issue)"
+    elif [[ -z "${TAGS// }" ]]; then
+        # Validate that TAGS is not empty, null, unset, or contains only whitespace
+        NEED_MANUAL_INPUT=true
+        ERROR_MESSAGE="No tags could be automatically determined from the repository"
+    fi
+
+    # Handle manual input if needed
+    if [[ "$NEED_MANUAL_INPUT" == "true" ]]; then
+        warning "$ERROR_MESSAGE" >&2
+
+        # Check if this might be an initial repository setup (no existing tags/branches)
+        if [[ "$ERROR_MESSAGE" == *"No tags could be automatically determined"* ]]; then
+            info "This appears to be a new repository with no existing releases." >&2
+            info "Will proceed with initial release creation..." >&2
+            # Return special marker to indicate initial release without tag lookup
+            echo -n "INITIAL_RELEASE"
+            return 0
+        fi
+
+        info "Please manually enter an existing tag/release identifier to proceed" >&2
+        newline >&2
+
+        local MANUAL_TAG
+        while true; do
+            MANUAL_TAG=$(input -n -l "Tag/Release identifier" -p "Enter an existing tag or release name")
+
+            # Validate that the user input is not empty
+            if [[ -n "${MANUAL_TAG// }" ]]; then
+                echo -n "$MANUAL_TAG"
+                return 0
+            else
+                warning "Tag identifier cannot be empty. Please enter a valid tag or release name." >&2
+                newline >&2
+            fi
+        done
+    fi
 
     local TAG_MAP
     # shellcheck disable=SC2034

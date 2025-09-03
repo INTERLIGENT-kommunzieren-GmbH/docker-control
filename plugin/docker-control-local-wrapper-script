@@ -1,5 +1,9 @@
 #!/usr/bin/env bash
 
+REAL_PATH="$(readlink -f "$0")"
+SCRIPT_DIR="$(dirname "$REAL_PATH")"
+DIR=$(realpath "$SCRIPT_DIR/..")
+
 IMAGE="ghcr.io/interligent-kommunzieren-gmbh/docker-plugin:latest"
 PROJECT_DIR=$(pwd)
 PARAMETER=()
@@ -203,7 +207,6 @@ configure_docker_options() {
         --rm -it
         --network host
         --add-host host.docker.internal:host-gateway
-        -u "$(id -u):$(id -g)"
         -e UID="$(id -u)"
         -e GID="$(id -g)"
         -e USER="$(whoami)"
@@ -214,6 +217,7 @@ configure_docker_options() {
         -v "$HOME/.ik/docker-plugin-mounts":"/docker-plugin-mounts"
         -e PLUGIN_MOUNTS_DIR="$HOME/.ik/docker-plugin-mounts"
         -e DOCKER_HOST=tcp://"$DOCKER_HOST_IP":2375
+        -v "$DIR":"/app"
     )
 
     # Mount Git configuration if it exists

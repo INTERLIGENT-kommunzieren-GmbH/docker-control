@@ -4,6 +4,53 @@ function _git() {
     git -C "$PROJECT_DIR"/htdocs "$@"
 }
 
+function _ensureGitConfig() {
+    # Configure Git user if not already set (for container environments)
+    if ! git config --global user.name >/dev/null 2>&1; then
+        git config --global user.name "Docker Plugin"
+        git config --global user.email "docker-plugin@interligent.com"
+    fi
+}
+
+function _testRemoteConnection() {
+    local WORKTREE_DIR="$1"
+
+    # Test if we can reach the remote repository
+    if git -C "$WORKTREE_DIR" ls-remote origin >/dev/null 2>&1; then
+        return 0
+    else
+        warning "Cannot connect to remote repository"
+        local REMOTE_URL
+        REMOTE_URL=$(git -C "$WORKTREE_DIR" remote get-url origin 2>/dev/null || echo "Unknown")
+        warning "Remote URL: $REMOTE_URL"
+        warning "Please check your SSH keys and network connection"
+        return 1
+    fi
+}
+
+function _pushWithErrorHandling() {
+    local WORKTREE_DIR="$1"
+    local REF="$2"
+    local REF_TYPE="$3"  # "branch" or "tag"
+    local PUSH_ARGS="$4" # Additional push arguments (e.g., "-u origin")
+
+    local PUSH_CMD="git -C \"$WORKTREE_DIR\" push"
+    if [[ -n "$PUSH_ARGS" ]]; then
+        PUSH_CMD="$PUSH_CMD $PUSH_ARGS"
+    fi
+    PUSH_CMD="$PUSH_CMD \"$REF\""
+
+    if eval "$PUSH_CMD"; then
+        info "Successfully pushed $REF_TYPE $REF to remote repository"
+        return 0
+    else
+        critical "Failed to push $REF_TYPE $REF to remote repository"
+        critical "The $REF_TYPE was created locally but is not available on the remote"
+        critical "Please check your network connection and repository access rights"
+        return 1
+    fi
+}
+
 function getLatestReleaseBranches() {
     local BRANCHES=()
     local LATEST_BRANCHES=()
@@ -105,7 +152,7 @@ function gitCreateRelease() {
 
     if [[ -z "$TAG" ]]; then
         # set latest tag if no tag was given
-        mapfile -t TAGS < <(getAllTags 1)
+        mapfile -t TAGS < <(getLatestTags 1)
 
         if [[ ${#TAGS[@]} -eq 0 ]]; then
             RELEASE="1.0.x"
@@ -157,6 +204,9 @@ function gitCreateRelease() {
 function gitCreateReleaseBranch() {
     local RELEASE="$1"
     local WORKTREE_DIR="$PROJECT_DIR/releases/$RELEASE"
+
+    # Ensure Git configuration is set
+    _ensureGitConfig
 
     mkdir -p "$PROJECT_DIR/releases"
     if ! _git worktree add "$WORKTREE_DIR" -b "$RELEASE" "$(getPrimaryBranch)"; then
@@ -234,12 +284,25 @@ function gitCreateReleaseBranch() {
         info "Created initial CHANGELOG.md for release branch $RELEASE"
     fi
 
-    git -C "$WORKTREE_DIR" push -u origin "$RELEASE"
+    # Test remote connection before attempting to push
+    if ! _testRemoteConnection "$WORKTREE_DIR"; then
+        critical "Cannot establish connection to remote repository"
+        critical "Please ensure:"
+        critical "  - SSH keys are properly configured and added to SSH agent"
+        critical "  - You have push access to the repository"
+        critical "  - The remote repository URL is correct"
+        exit 1
+    fi
+
+    # Push the release branch to remote with upstream tracking
+    if ! _pushWithErrorHandling "$WORKTREE_DIR" "$RELEASE" "branch" "-u origin"; then
+        exit 1
+    fi
 
     info "Created and pushed release branch $RELEASE"
 
     # Remove worktree
-    if _git worktree remove "$WORKTREE_DIR" --force; then
+    if ! _git worktree remove "$WORKTREE_DIR" --force; then
         warning "Could not remove worktree automatically: $WORKTREE_DIR"
     fi
 }
@@ -248,6 +311,9 @@ function gitCreateTag() {
     local BRANCH_NAME="$1"
     local RELEASE="$2"
     local WORKTREE_DIR="$PROJECT_DIR/releases/$BRANCH_NAME"
+
+    # Ensure Git configuration is set
+    _ensureGitConfig
 
     _git worktree add "$WORKTREE_DIR" "$BRANCH_NAME"
 
@@ -267,15 +333,33 @@ function gitCreateTag() {
     commitChangelog "$WORKTREE_DIR" "$RELEASE"
 
     # Create the tag after changelog is committed
-    if git -C "$WORKTREE_DIR" tag "$RELEASE" && _git push origin "$RELEASE"; then
-        info "Created patch tag: $RELEASE with changelog"
+    if git -C "$WORKTREE_DIR" tag "$RELEASE"; then
+        info "Created local tag: $RELEASE"
+
+        # Test remote connection before attempting to push tag
+        if ! _testRemoteConnection "$PROJECT_DIR/htdocs"; then
+            critical "Cannot establish connection to remote repository for tag push"
+            critical "The tag was created locally but cannot be pushed to remote"
+            exit 1
+        fi
+
+        # Push the tag to remote repository using _git (which operates from htdocs)
+        if _git push origin "$RELEASE"; then
+            info "Successfully pushed tag $RELEASE to remote repository"
+            info "Created patch tag: $RELEASE with changelog"
+        else
+            critical "Failed to push tag $RELEASE to remote repository"
+            critical "The tag was created locally but is not available on the remote"
+            critical "Please check your network connection and repository access rights"
+            exit 1
+        fi
     else
-        critical "Error: Failed to create patch tag '$RELEASE'" >&2
+        critical "Error: Failed to create local tag '$RELEASE'" >&2
         exit 1
     fi
 
     # Remove worktree
-    if _git worktree remove "$WORKTREE_DIR" --force; then
+    if ! _git worktree remove "$WORKTREE_DIR" --force; then
         warning "Could not remove worktree automatically: $WORKTREE_DIR"
     fi
 }
@@ -408,16 +492,21 @@ function commitChangelog() {
     local WORKTREE_DIR="$1"
     local TAG="$2"
 
+    # Ensure Git configuration is set
+    _ensureGitConfig
+
     # Stage and commit the changelog
     if git -C "$WORKTREE_DIR" add CHANGELOG.md; then
         if git -C "$WORKTREE_DIR" commit -m "release: update changelog"; then
             info "Committed CHANGELOG.md to release branch"
 
-            # Push the changes
+            # Push the changes to remote repository
             if git -C "$WORKTREE_DIR" push; then
-                info "Pushed changelog changes to remote"
+                info "Successfully pushed changelog changes to remote repository"
             else
-                warning "Failed to push changelog changes to remote"
+                warning "Failed to push changelog changes to remote repository"
+                warning "The changelog was committed locally but may not be available on the remote"
+                warning "You may need to manually push the changes later"
             fi
         else
             warning "Failed to commit CHANGELOG.md"
@@ -509,11 +598,6 @@ function getPrimaryBranch() {
         critical "could not find main or master branch"
         exit 1
     fi
-}
-
-function getAllTags() {
-    local INCL_BRANCHES="$1"
-    getLatestTags "$INCL_BRANCHES"
 }
 
 function getLatestReleaseBranch() {
