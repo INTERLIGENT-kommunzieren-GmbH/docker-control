@@ -264,20 +264,17 @@ function gitCreateReleaseBranch() {
     RELEASE_DATE=$(date '+%Y-%m-%d')
 
     if [ ! -f "$CHANGELOG_FILE" ]; then
-        # Create new changelog file for release branch
-        {
-            echo "# Changelog"
-            echo ""
-            echo "All notable changes to this project will be documented in this file."
-            echo ""
-            echo "The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),"
-            echo "and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html)."
-            echo ""
-            echo "## [$RELEASE] - $RELEASE_DATE"
-            echo ""
-            echo "* Release branch created"
-            echo ""
-        } > "$CHANGELOG_FILE"
+        # For initial release branch, create changelog with proper version format
+        local INITIAL_VERSION
+        if [[ "$RELEASE" =~ ^([0-9]+)\.([0-9]+)\.x$ ]]; then
+            # Convert 1.0.x to 1.0.0 for initial version
+            INITIAL_VERSION="${BASH_REMATCH[1]}.${BASH_REMATCH[2]}.0"
+        else
+            INITIAL_VERSION="$RELEASE"
+        fi
+
+        # Use the writeChangelogToFile function for consistency
+        writeChangelogToFile "$INITIAL_VERSION" "$WORKTREE_DIR"
 
         git -C "$WORKTREE_DIR" add CHANGELOG.md
         git -C "$WORKTREE_DIR" commit -m "release: Add initial changelog for $RELEASE"
@@ -409,6 +406,12 @@ function generateChangelogEntry() {
     local PRIMARY_BRANCH
     PRIMARY_BRANCH=$(getPrimaryBranch)
 
+    # Clean up tag format (remove 'v' prefix if present)
+    local CLEAN_TAG="$TAG"
+    if [[ "$TAG" =~ ^v(.+)$ ]]; then
+        CLEAN_TAG="${BASH_REMATCH[1]}"
+    fi
+
     # Get all existing tags and sort them by semver
     local ALL_TAGS
     ALL_TAGS=$(git -C "$WORKTREE_DIR" tag -l | grep -E '^v?[0-9]+\.[0-9]+\.[0-9]+$' | sort -V)
@@ -443,7 +446,7 @@ function generateChangelogEntry() {
     local RELEASE_DATE
     RELEASE_DATE=$(date '+%Y-%m-%d')
 
-    echo "## [$TAG] - $RELEASE_DATE"
+    echo "## [$CLEAN_TAG] - $RELEASE_DATE"
     echo ""
     if [ -n "$CHANGELOG_CONTENT" ]; then
         echo "$CHANGELOG_CONTENT"
@@ -465,10 +468,19 @@ function writeChangelogToFile() {
 
     # Create or update CHANGELOG.md
     if [ -f "$CHANGELOG_FILE" ]; then
-        # Prepend new entry to existing changelog
+        # Check if this version already exists in the changelog
+        if grep -q "## \[$TAG\]" "$CHANGELOG_FILE"; then
+            info "Entry for $TAG already exists in CHANGELOG.md, skipping"
+            return 0
+        fi
+
+        # Insert new entry after the header but before existing entries
         {
+            # Extract header (everything before the first ## entry)
+            sed '/^## \[/,$d' "$CHANGELOG_FILE"
             echo "$NEW_ENTRY"
-            cat "$CHANGELOG_FILE"
+            # Extract existing entries (everything from the first ## entry onwards)
+            sed -n '/^## \[/,$p' "$CHANGELOG_FILE"
         } > "$TEMP_FILE"
         mv "$TEMP_FILE" "$CHANGELOG_FILE"
         info "Updated existing CHANGELOG.md with entry for $TAG"
