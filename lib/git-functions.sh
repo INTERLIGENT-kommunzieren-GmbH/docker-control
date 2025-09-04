@@ -810,6 +810,8 @@ function writeChangelogToFile() {
                 /^## \[Unreleased\]/ {
                     # Found Unreleased section, print new entry instead and skip until next ## section
                     print new_entry
+                    # Add extra blank line to separate from next section
+                    print ""
                     while ((getline > 0) && !/^## \[/) continue
                     if (/^## \[/) print  # Print the line that broke the loop (next section header)
                     next
@@ -822,6 +824,8 @@ function writeChangelogToFile() {
                 # Extract header (everything before the first ## entry)
                 sed '/^## \[/,$d' "$CHANGELOG_FILE"
                 echo "$NEW_ENTRY"
+                # Add extra blank line to separate from existing entries
+                echo ""
                 # Extract existing entries (everything from the first ## entry onwards)
                 sed -n '/^## \[/,$p' "$CHANGELOG_FILE"
             } > "$TEMP_EDIT_FILE"
