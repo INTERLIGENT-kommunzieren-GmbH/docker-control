@@ -57,9 +57,12 @@ function getLatestReleaseBranches() {
     local NUMBER_OF_MAJOR_VERSIONS=2
     local NUMBER_OF_MINOR_VERSIONS=3
 
+    # Fetch all remote branches to ensure we have up-to-date information
+    _git fetch origin >/dev/null 2>&1
+
     # Add branch names like '*.*.x' to BRANCHES array
-    mapfile -t BRANCHES < <(_git branch -a --format='%(refname:short)' | grep -E '^[0-9]+\.[0-9]+\.x$')
-    mapfile -t BRANCHES < <(printf "%s\n" "${BRANCHES[@]}" | sort -u)
+    # Include both local branches and remote branches (strip origin/ prefix)
+    mapfile -t BRANCHES < <(_git branch -a --format='%(refname:short)' | sed 's|^origin/||' | grep -E '^[0-9]+\.[0-9]+\.x$' | sort -u)
 
     # Extract last N major versions (numerically descending)
     local MAJOR_VERSIONS=()
