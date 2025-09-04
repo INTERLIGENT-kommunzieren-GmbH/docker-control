@@ -731,28 +731,29 @@ function generateChangelogEntry() {
                 MERGE_BASE=$(_git merge-base "$HIGHEST_BRANCH_HEAD" "$PRIMARY_BRANCH" 2>/dev/null)
 
                 if [[ -n "$MERGE_BASE" ]]; then
-                    # Get commits from the merge base to current primary branch HEAD
-                    # This gives us commits that were added to primary branch since the release branch was created
-                    CHANGELOG_CONTENT=$(_git log "$MERGE_BASE..$PRIMARY_BRANCH" --pretty=format:"* %h - %s (%an, %ad)" --date=short --no-merges 2>/dev/null | \
+                    # Get commits from the merge base to current release branch HEAD
+                    # This gives us commits that were added to primary branch since the previous release branch was created
+                    # PLUS commits that were added to the current release branch after it was created
+                    CHANGELOG_CONTENT=$(_git log "$MERGE_BASE..$CURRENT_COMMIT" --pretty=format:"* %h - %s (%an, %ad)" --date=short --no-merges 2>/dev/null | \
                         grep -v "release: " || echo "")
-                    info "Generating changelog for first tag: using commit range $MERGE_BASE..$PRIMARY_BRANCH (commits added to $PRIMARY_BRANCH since $HIGHEST_EXISTING_BRANCH was created)" >&2
+                    info "Generating changelog for first tag: using commit range $MERGE_BASE..$CURRENT_COMMIT (commits added since $HIGHEST_EXISTING_BRANCH was created, including release branch commits)" >&2
                 else
-                    # Fallback: use commits from the release branch to primary branch
-                    CHANGELOG_CONTENT=$(_git log "$HIGHEST_BRANCH_HEAD..$PRIMARY_BRANCH" --pretty=format:"* %h - %s (%an, %ad)" --date=short --no-merges 2>/dev/null | \
+                    # Fallback: use commits from the highest existing release branch to current release branch HEAD
+                    CHANGELOG_CONTENT=$(_git log "$HIGHEST_BRANCH_HEAD..$CURRENT_COMMIT" --pretty=format:"* %h - %s (%an, %ad)" --date=short --no-merges 2>/dev/null | \
                         grep -v "release: " || echo "")
-                    info "Generating changelog for first tag: using commit range $HIGHEST_BRANCH_HEAD..$PRIMARY_BRANCH" >&2
+                    info "Generating changelog for first tag: using commit range $HIGHEST_BRANCH_HEAD..$CURRENT_COMMIT" >&2
                 fi
             else
-                # Can't find the highest existing release branch, use all commits from primary branch
-                CHANGELOG_CONTENT=$(_git log "$PRIMARY_BRANCH" --pretty=format:"* %h - %s (%an, %ad)" --date=short --no-merges 2>/dev/null | \
+                # Can't find the highest existing release branch, use all commits from current release branch
+                CHANGELOG_CONTENT=$(_git log "$CURRENT_COMMIT" --pretty=format:"* %h - %s (%an, %ad)" --date=short --no-merges 2>/dev/null | \
                     grep -v "release: " || echo "")
-                info "Generating changelog for first tag: using all commits from $PRIMARY_BRANCH" >&2
+                info "Generating changelog for first tag: using all commits from current release branch HEAD $CURRENT_COMMIT" >&2
             fi
         else
-            # No existing release branches - this is the very first release, include all commits from primary branch
-            CHANGELOG_CONTENT=$(_git log "$PRIMARY_BRANCH" --pretty=format:"* %h - %s (%an, %ad)" --date=short --no-merges 2>/dev/null | \
+            # No existing release branches - this is the very first release, include all commits from current release branch
+            CHANGELOG_CONTENT=$(_git log "$CURRENT_COMMIT" --pretty=format:"* %h - %s (%an, %ad)" --date=short --no-merges 2>/dev/null | \
                 grep -v "release: " || echo "")
-            info "Generating changelog for first tag: using all commits from $PRIMARY_BRANCH (first release)" >&2
+            info "Generating changelog for first tag: using all commits from current release branch HEAD $CURRENT_COMMIT (first release)" >&2
         fi
     else
         # Subsequent tags - show commits between previous tag and current tag, excluding release preparation commits
