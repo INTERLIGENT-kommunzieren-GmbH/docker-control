@@ -64,42 +64,13 @@ EOF
 }
 
 function _createNewRelease() {
-    local RELEASE
     local CREATED_RELEASE
 
     sub_headline "create new release"
     newline
 
-    RELEASE=$(select_release_tag 1)
-
-    # Check if release selection was successful
-    if [[ $? -ne 0 ]]; then
-        critical "Failed to select base release/tag"
-        exit 1
-    fi
-
-    # Handle special case for initial release
-    if [[ "$RELEASE" == "INITIAL_RELEASE" ]]; then
-        info "No base release specified - will create initial release"
-
-        # Directly create initial release without calling gitCreateRelease
-        # to avoid the getLatestTags call that causes authentication issues
-        local INITIAL_RELEASE="1.0.x"
-        if gitCreateReleaseBranch "$INITIAL_RELEASE"; then
-            info "Successfully created initial release: $INITIAL_RELEASE"
-            text 'Release {{ Foreground "14" "'"$INITIAL_RELEASE"'"}} has been created and is ready for use'
-            return 0
-        else
-            critical "Failed to create initial release"
-            exit 1
-        fi
-    fi
-
-    info "Selected base release/tag: $RELEASE"
-    newline
-
-    # Call gitCreateRelease and check for success
-    if gitCreateRelease "$RELEASE"; then
+    # Call the enhanced gitCreateRelease workflow (no parameters needed)
+    if gitCreateRelease; then
         # Get the created release from REPLY variable
         CREATED_RELEASE="$REPLY"
 

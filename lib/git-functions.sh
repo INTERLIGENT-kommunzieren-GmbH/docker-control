@@ -140,77 +140,329 @@ function getLatestTags() {
     printf "%s\n" "${LATEST_TAGS[@]}"
 }
 
-function gitCreateRelease() {
-    local IS_NEW_MAJOR
-    local IS_NEW_MINOR
-    local TAGS
-    local TAG="$1"
-    local RELEASE
-    local LATEST_MAJOR
-    local LATEST_MINOR
-    local LATEST_PATCH
-
-    if [[ -z "$TAG" ]]; then
-        # set latest tag if no tag was given
-        mapfile -t TAGS < <(getLatestTags 1)
-
-        if [[ ${#TAGS[@]} -eq 0 ]]; then
-            RELEASE="1.0.x"
-
-            gitCreateReleaseBranch "$RELEASE"
-            info "No existing tags found, creating initial release: $RELEASE"
-            REPLY="$RELEASE"
-            return
-        fi
-        TAG="${TAGS[0]}"
+function validateGitRepository() {
+    # Check if we're in a git repository
+    if ! _git rev-parse --git-dir >/dev/null 2>&1; then
+        critical "Not in a git repository"
+        exit 1
     fi
 
-    IS_NEW_MAJOR=$(confirm -n "Does the release include breaking changes?")
-    LATEST_MAJOR="$(echo "$TAG" | awk -F. '{print $1}')"
+    # Check if remote origin exists
+    if ! _git remote get-url origin >/dev/null 2>&1; then
+        critical "No remote 'origin' configured"
+        exit 1
+    fi
 
-    if [[ "$IS_NEW_MAJOR" == "y" ]]; then
-        RELEASE="$((LATEST_MAJOR + 1)).0.x"
+    # Test remote connection
+    if ! _git ls-remote origin >/dev/null 2>&1; then
+        critical "Cannot connect to remote repository"
+        critical "Please check your network connection and authentication"
+        exit 1
+    fi
 
-        # Create Major Release Worktree
-        gitCreateReleaseBranch "$RELEASE"
-        info "Created major release branch: $RELEASE"
+    return 0
+}
+
+function validateBranchExists() {
+    local BRANCH="$1"
+
+    if [[ -z "$BRANCH" ]]; then
+        critical "Branch name cannot be empty"
+        exit 1
+    fi
+
+    # Check if branch exists locally or remotely
+    if ! _git rev-parse --verify "$BRANCH" >/dev/null 2>&1 && \
+       ! _git rev-parse --verify "origin/$BRANCH" >/dev/null 2>&1; then
+        critical "Branch '$BRANCH' does not exist locally or remotely"
+        exit 1
+    fi
+
+    return 0
+}
+
+function getHighestReleaseBranch() {
+    # Get all release branches and find the highest semantic version
+    local BRANCHES=()
+
+    # Fetch latest remote branches to ensure we have up-to-date information
+    _git fetch origin >/dev/null 2>&1
+
+    # Get both local and remote release branches (format: X.Y.x)
+    mapfile -t BRANCHES < <(_git branch -a --format='%(refname:short)' | grep -E '^[0-9]+\.[0-9]+\.x$' | sort -u)
+
+    if [[ ${#BRANCHES[@]} -eq 0 ]]; then
+        echo ""
+        return
+    fi
+
+    # Extract version numbers and sort by semantic version
+    local HIGHEST_BRANCH=""
+    local HIGHEST_MAJOR=0
+    local HIGHEST_MINOR=0
+
+    for branch in "${BRANCHES[@]}"; do
+        # Extract version from branch name (e.g., 1.2.x -> 1.2)
+        if [[ "$branch" =~ ^([0-9]+)\.([0-9]+)\.x$ ]]; then
+            local MAJOR="${BASH_REMATCH[1]}"
+            local MINOR="${BASH_REMATCH[2]}"
+
+            # Compare versions
+            if [[ $MAJOR -gt $HIGHEST_MAJOR ]] || [[ $MAJOR -eq $HIGHEST_MAJOR && $MINOR -gt $HIGHEST_MINOR ]]; then
+                HIGHEST_MAJOR=$MAJOR
+                HIGHEST_MINOR=$MINOR
+                HIGHEST_BRANCH="$branch"
+            fi
+        fi
+    done
+
+    echo "$HIGHEST_BRANCH"
+}
+
+function getNextMajorVersion() {
+    local HIGHEST_BRANCH
+    HIGHEST_BRANCH=$(getHighestReleaseBranch)
+
+    if [[ -z "$HIGHEST_BRANCH" ]]; then
+        echo "1.0.x"
+        return
+    fi
+
+    # Extract major version and increment
+    if [[ "$HIGHEST_BRANCH" =~ ^([0-9]+)\.([0-9]+)\.x$ ]]; then
+        local MAJOR="${BASH_REMATCH[1]}"
+        echo "$((MAJOR + 1)).0.x"
     else
-        LATEST_MINOR="$(echo "$TAG" | awk -F. '{print $2}')"
-        IS_NEW_MINOR=$(confirm -n "Does the release include new features?")
+        critical "Invalid release branch format: $HIGHEST_BRANCH"
+        exit 1
+    fi
+}
 
-        if [[ "$IS_NEW_MINOR" == "y" ]]; then
-            RELEASE="$LATEST_MAJOR.$((LATEST_MINOR + 1)).x"
+function getNextMinorVersion() {
+    local HIGHEST_BRANCH
+    HIGHEST_BRANCH=$(getHighestReleaseBranch)
 
-            # Create Minor Release Worktree
-            gitCreateReleaseBranch "$RELEASE"
-            info "Created minor release branch: $RELEASE"
+    if [[ -z "$HIGHEST_BRANCH" ]]; then
+        echo "1.0.x"
+        return
+    fi
+
+    # Extract major and minor versions and increment minor
+    if [[ "$HIGHEST_BRANCH" =~ ^([0-9]+)\.([0-9]+)\.x$ ]]; then
+        local MAJOR="${BASH_REMATCH[1]}"
+        local MINOR="${BASH_REMATCH[2]}"
+        echo "$MAJOR.$((MINOR + 1)).x"
+    else
+        critical "Invalid release branch format: $HIGHEST_BRANCH"
+        exit 1
+    fi
+}
+
+function selectPatchReleaseBranch() {
+    # Get all existing release branches
+    local BRANCHES=()
+
+    # Fetch latest remote branches to ensure we have up-to-date information
+    _git fetch origin >/dev/null 2>&1
+
+    # Get both local and remote release branches (format: X.Y.x)
+    mapfile -t BRANCHES < <(_git branch -a --format='%(refname:short)' | grep -E '^[0-9]+\.[0-9]+\.x$' | sort -V -r)
+
+    if [[ ${#BRANCHES[@]} -eq 0 ]]; then
+        critical "No existing release branches found for patch release"
+        exit 1
+    fi
+
+    # Use the same pattern as getLatestReleaseBranch with choose utility
+    local BRANCH_MAP
+    declare -A BRANCH_MAP=()
+    local BRANCH_ORDER
+    declare -a BRANCH_ORDER=()
+
+    # Build the associative array and order array for the choose function
+    for BRANCH in "${BRANCHES[@]}"; do
+        BRANCH_MAP["$BRANCH"]="$BRANCH"
+        BRANCH_ORDER+=("$BRANCH")
+    done
+
+    choose "Select release branch to patch" BRANCH_MAP BRANCH_ORDER
+}
+
+function gitCreateRelease() {
+    local TAG="$1"
+    local RELEASE_TYPE=""
+    local RELEASE=""
+
+    info "Starting release creation workflow..."
+
+    # Pre-flight checks
+    info "Performing pre-flight checks..."
+
+    # Validate git repository
+    validateGitRepository
+
+    local PRIMARY_BRANCH
+    PRIMARY_BRANCH=$(getPrimaryBranch)
+
+    # Validate primary branch exists
+    validateBranchExists "$PRIMARY_BRANCH"
+
+    # Ensure primary branch is up-to-date
+    info "Ensuring $PRIMARY_BRANCH branch is up-to-date..."
+    if ! _git fetch origin "$PRIMARY_BRANCH"; then
+        critical "Failed to fetch latest changes from remote"
+        exit 1
+    fi
+
+    if ! _git checkout "$PRIMARY_BRANCH"; then
+        critical "Failed to checkout $PRIMARY_BRANCH branch"
+        exit 1
+    fi
+
+    if ! _git reset --hard "origin/$PRIMARY_BRANCH"; then
+        critical "Failed to sync with remote $PRIMARY_BRANCH branch"
+        exit 1
+    fi
+
+    info "Pre-flight checks completed successfully"
+    echo
+
+    # Step 1: Check for existing release branches
+    info "=== Checking for existing release branches ==="
+    local EXISTING_BRANCHES=()
+    mapfile -t EXISTING_BRANCHES < <(_git branch -a --format='%(refname:short)' | grep -E '^[0-9]+\.[0-9]+\.x$' | sort -u)
+
+    if [[ ${#EXISTING_BRANCHES[@]} -eq 0 ]]; then
+        # No existing release branches - create initial release automatically
+        info "No existing release branches found in repository"
+        info "Creating initial release branch automatically..."
+        echo
+
+        RELEASE="1.0.x"
+        RELEASE_TYPE="INITIAL"
+
+        sub_headline "Creating Initial Release Branch"
+        info "Automatically creating initial release: $RELEASE"
+        gitCreateReleaseBranch "$RELEASE"
+        info "✓ Successfully created initial release branch: $RELEASE"
+
+        newline
+        info "=== Release Creation Complete ==="
+        info "✓ Initial release '$RELEASE' has been successfully created"
+        info "✓ Changelog has been generated and committed"
+        info "✓ Release branch has been pushed to remote repository"
+        newline
+
+        REPLY="$RELEASE"
+        return 0
+    fi
+
+    # Existing release branches found - proceed with normal classification
+    info "Found existing release branches: ${EXISTING_BRANCHES[*]}"
+    echo
+
+    # Step 2: Release Type Classification
+    info "=== Release Type Classification ==="
+    local IS_BREAKING_CHANGE
+    IS_BREAKING_CHANGE=$(confirm -n "Is this a Breaking Change? (y/n)")
+
+    if [[ "$IS_BREAKING_CHANGE" == "y" ]]; then
+        RELEASE_TYPE="MAJOR"
+        info "Classified as: Breaking Change (Major version increment)"
+    else
+        local IS_NEW_FEATURE
+        IS_NEW_FEATURE=$(confirm -n "Is this a new Feature? (y/n)")
+
+        if [[ "$IS_NEW_FEATURE" == "y" ]]; then
+            RELEASE_TYPE="MINOR"
+            info "Classified as: New Feature (Minor version increment)"
         else
-            # Patch Release Logic
-            LATEST_PATCH="$(echo "$TAG" | awk -F. '{print $3}')"
-            if [[ "$LATEST_PATCH" == "x" ]]; then
-                # When TAG is a branch name like "2.1.x", find the latest existing patch tag
-                # for this major.minor version and increment it
-                local EXISTING_PATCHES
-                mapfile -t EXISTING_PATCHES < <(_git tag -l | grep "^$LATEST_MAJOR\.$LATEST_MINOR\.[0-9]\+$" | sort -V)
+            RELEASE_TYPE="PATCH"
+            info "Classified as: Patch (Bug fix or maintenance)"
+        fi
+    fi
 
-                if [[ ${#EXISTING_PATCHES[@]} -eq 0 ]]; then
-                    # No existing patches, start with .0
-                    RELEASE="$LATEST_MAJOR.$LATEST_MINOR.0"
-                else
-                    # Get the highest existing patch number and increment it
-                    local HIGHEST_PATCH_TAG="${EXISTING_PATCHES[-1]}"
-                    local HIGHEST_PATCH_NUM
-                    HIGHEST_PATCH_NUM="$(echo "$HIGHEST_PATCH_TAG" | awk -F. '{print $3}')"
-                    RELEASE="$LATEST_MAJOR.$LATEST_MINOR.$((HIGHEST_PATCH_NUM + 1))"
-                fi
-            else
-                RELEASE="$LATEST_MAJOR.$LATEST_MINOR.$((LATEST_PATCH + 1))"
+    echo
+
+    # Step 3: Branch Selection Logic (only for existing repositories)
+    info "=== Branch Selection ==="
+    case "$RELEASE_TYPE" in
+        "MAJOR")
+            RELEASE=$(getNextMajorVersion)
+            info "Automatically selected branch for breaking change: $RELEASE"
+            sub_headline "Creating Major Release Branch"
+            gitCreateReleaseBranch "$RELEASE"
+            info "✓ Successfully created major release branch: $RELEASE"
+            ;;
+        "MINOR")
+            RELEASE=$(getNextMinorVersion)
+            info "Automatically selected branch for new feature: $RELEASE"
+            sub_headline "Creating Minor Release Branch"
+            gitCreateReleaseBranch "$RELEASE"
+            info "✓ Successfully created minor release branch: $RELEASE"
+            ;;
+        "PATCH")
+            info "Patch release requires selecting an existing release branch:"
+            newline
+            local SELECTED_BRANCH
+            SELECTED_BRANCH=$(selectPatchReleaseBranch)
+
+            if [[ -z "$SELECTED_BRANCH" ]]; then
+                critical "No release branch selected for patch"
+                exit 1
             fi
 
+            info "✓ Selected release branch for patching: $SELECTED_BRANCH"
+
+            # Extract version components for patch logic (format: X.Y.x)
+            local MAJOR MINOR
+            MAJOR=$(echo "$SELECTED_BRANCH" | awk -F. '{print $1}')
+            MINOR=$(echo "$SELECTED_BRANCH" | awk -F. '{print $2}')
+
+            info "Determining next patch version for $MAJOR.$MINOR.x..."
+            info "Searching for existing tags with pattern: ^$MAJOR\\.$MINOR\\.[0-9]\\+$"
+
+            # Find the latest existing patch tag for this major.minor version
+            local EXISTING_PATCHES
+            mapfile -t EXISTING_PATCHES < <(_git tag -l | grep "^$MAJOR\.$MINOR\.[0-9]\+$" | sort -V)
+
+            info "Found ${#EXISTING_PATCHES[@]} existing patch tags: ${EXISTING_PATCHES[*]}"
+
+            if [[ ${#EXISTING_PATCHES[@]} -eq 0 ]]; then
+                # No existing patches, this is the first tag on this release branch
+                # Always start with .0 for the first tag on any release branch
+                RELEASE="$MAJOR.$MINOR.0"
+                info "No existing tags found for release branch $SELECTED_BRANCH"
+                info "Creating first tag on this release branch: $RELEASE"
+                info "This is the initial release for the $SELECTED_BRANCH branch"
+            else
+                # Get the highest existing patch number and increment it
+                local HIGHEST_PATCH_TAG="${EXISTING_PATCHES[-1]}"
+                local HIGHEST_PATCH_NUM
+                HIGHEST_PATCH_NUM="$(echo "$HIGHEST_PATCH_TAG" | awk -F. '{print $3}')"
+                RELEASE="$MAJOR.$MINOR.$((HIGHEST_PATCH_NUM + 1))"
+                info "Latest patch: $HIGHEST_PATCH_TAG, incrementing to: $RELEASE"
+                info "This is a patch release (bug fix) on the $SELECTED_BRANCH branch"
+            fi
+
+            sub_headline "Creating Patch Release Tag"
+            info "Creating patch tag: $RELEASE on branch $SELECTED_BRANCH"
             # Create Patch Tag on existing Release Branch (includes automatic changelog generation)
-            gitCreateTag "$LATEST_MAJOR.$LATEST_MINOR.x" "$RELEASE"
-        fi
+            gitCreateTag "$SELECTED_BRANCH" "$RELEASE"
+            info "✓ Successfully created patch release: $RELEASE"
+            ;;
+    esac
+
+    newline
+    info "=== Release Creation Complete ==="
+    info "✓ Release '$RELEASE' has been successfully created"
+    info "✓ Changelog has been generated and committed"
+    if [[ "$RELEASE_TYPE" != "PATCH" ]]; then
+        info "✓ Release branch has been pushed to remote repository"
+    else
+        info "✓ Release tag has been pushed to remote repository"
     fi
+    newline
 
     REPLY="$RELEASE"
 }
@@ -272,31 +524,8 @@ function gitCreateReleaseBranch() {
     # Generate and commit changelog for release branch
     sub_headline "Generating changelog for release branch $RELEASE"
 
-    # For release branches, we'll create a branch-specific changelog entry
-    local CHANGELOG_FILE="$WORKTREE_DIR/CHANGELOG.md"
-    local RELEASE_DATE
-    RELEASE_DATE=$(date '+%Y-%m-%d')
-
-    if [ ! -f "$CHANGELOG_FILE" ]; then
-        # Create initial changelog file with branch entry (not version-specific)
-        {
-            echo "# Changelog"
-            echo ""
-            echo "All notable changes to this project will be documented in this file."
-            echo ""
-            echo "The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),"
-            echo "and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html)."
-            echo ""
-            echo "## [$RELEASE] - $RELEASE_DATE"
-            echo ""
-            echo "* Release branch created"
-            echo ""
-        } > "$CHANGELOG_FILE"
-
-        git -C "$WORKTREE_DIR" add CHANGELOG.md
-        git -C "$WORKTREE_DIR" commit -m "release: Add initial changelog for release branch $RELEASE"
-        info "Created initial CHANGELOG.md for release branch $RELEASE"
-    fi
+    # Generate changelog content based on commits since last release
+    generateAndEditChangelogForReleaseBranch "$RELEASE" "$WORKTREE_DIR"
 
     # Test remote connection before attempting to push
     if ! _testRemoteConnection "$WORKTREE_DIR"; then
@@ -472,37 +701,66 @@ function generateChangelogEntry() {
 
     # Generate changelog content
     if [ -z "$PREVIOUS_TAG" ]; then
-        # First tag - show commits added to the release branch from branch creation to current tag
-        # Find the merge base with primary branch (this is where the release branch started)
-        local BRANCH_POINT=""
-        if git -C "$WORKTREE_DIR" rev-parse --verify "origin/$PRIMARY_BRANCH" >/dev/null 2>&1; then
-            BRANCH_POINT=$(git -C "$WORKTREE_DIR" merge-base "origin/$PRIMARY_BRANCH" "$CURRENT_COMMIT" 2>/dev/null || echo "")
-        elif git -C "$WORKTREE_DIR" rev-parse --verify "$PRIMARY_BRANCH" >/dev/null 2>&1; then
-            BRANCH_POINT=$(git -C "$WORKTREE_DIR" merge-base "$PRIMARY_BRANCH" "$CURRENT_COMMIT" 2>/dev/null || echo "")
-        fi
+        # First tag on this release branch - use the same logic as release branch changelog generation
+        # to ensure consistency between release branch and tag changelogs
 
-        if [ -n "$BRANCH_POINT" ]; then
-            # Show commits added to the release branch from branch point to current tag, excluding release preparation commits
-            CHANGELOG_CONTENT=$(git -C "$WORKTREE_DIR" log "$BRANCH_POINT".."$CURRENT_COMMIT" --pretty=format:"* %h - %s (%an, %ad)" --date=short --no-merges | \
-                grep -v "release: " || echo "")
+        # Get existing release branches (excluding the current one being tagged)
+        local EXISTING_BRANCHES=()
+        local CURRENT_BRANCH_NAME=""
+        CURRENT_BRANCH_NAME=$(git -C "$WORKTREE_DIR" branch --show-current)
 
-            # Debug: log the commit range being used
-            info "Generating changelog for first tag: using commit range $BRANCH_POINT..$CURRENT_COMMIT"
+        # Use the main repository context to get accurate branch information
+        mapfile -t EXISTING_BRANCHES < <(_git branch -a --format='%(refname:short)' | grep -E '^[0-9]+\.[0-9]+\.x$' | grep -v "^$CURRENT_BRANCH_NAME$" | sort -V -r)
+
+        if [[ ${#EXISTING_BRANCHES[@]} -gt 0 ]]; then
+            # Use the highest existing release branch to determine commit range
+            local HIGHEST_EXISTING_BRANCH="${EXISTING_BRANCHES[0]}"
+            info "Found highest existing release branch: $HIGHEST_EXISTING_BRANCH" >&2
+
+            # Try to find the branch HEAD - check both local and remote references
+            local HIGHEST_BRANCH_HEAD=""
+            if _git rev-parse --verify "origin/$HIGHEST_EXISTING_BRANCH" >/dev/null 2>&1; then
+                HIGHEST_BRANCH_HEAD="origin/$HIGHEST_EXISTING_BRANCH"
+            elif _git rev-parse --verify "$HIGHEST_EXISTING_BRANCH" >/dev/null 2>&1; then
+                HIGHEST_BRANCH_HEAD="$HIGHEST_EXISTING_BRANCH"
+            fi
+
+            if [[ -n "$HIGHEST_BRANCH_HEAD" ]]; then
+                # Find the merge base (common ancestor) between the highest existing release branch and primary branch
+                local MERGE_BASE
+                MERGE_BASE=$(_git merge-base "$HIGHEST_BRANCH_HEAD" "$PRIMARY_BRANCH" 2>/dev/null)
+
+                if [[ -n "$MERGE_BASE" ]]; then
+                    # Get commits from the merge base to current primary branch HEAD
+                    # This gives us commits that were added to primary branch since the release branch was created
+                    CHANGELOG_CONTENT=$(_git log "$MERGE_BASE..$PRIMARY_BRANCH" --pretty=format:"* %h - %s (%an, %ad)" --date=short --no-merges 2>/dev/null | \
+                        grep -v "release: " || echo "")
+                    info "Generating changelog for first tag: using commit range $MERGE_BASE..$PRIMARY_BRANCH (commits added to $PRIMARY_BRANCH since $HIGHEST_EXISTING_BRANCH was created)" >&2
+                else
+                    # Fallback: use commits from the release branch to primary branch
+                    CHANGELOG_CONTENT=$(_git log "$HIGHEST_BRANCH_HEAD..$PRIMARY_BRANCH" --pretty=format:"* %h - %s (%an, %ad)" --date=short --no-merges 2>/dev/null | \
+                        grep -v "release: " || echo "")
+                    info "Generating changelog for first tag: using commit range $HIGHEST_BRANCH_HEAD..$PRIMARY_BRANCH" >&2
+                fi
+            else
+                # Can't find the highest existing release branch, use all commits from primary branch
+                CHANGELOG_CONTENT=$(_git log "$PRIMARY_BRANCH" --pretty=format:"* %h - %s (%an, %ad)" --date=short --no-merges 2>/dev/null | \
+                    grep -v "release: " || echo "")
+                info "Generating changelog for first tag: using all commits from $PRIMARY_BRANCH" >&2
+            fi
         else
-            # Fallback: show all commits up to current tag, excluding release preparation commits
-            CHANGELOG_CONTENT=$(git -C "$WORKTREE_DIR" log "$CURRENT_COMMIT" --pretty=format:"* %h - %s (%an, %ad)" --date=short --no-merges | \
+            # No existing release branches - this is the very first release, include all commits from primary branch
+            CHANGELOG_CONTENT=$(_git log "$PRIMARY_BRANCH" --pretty=format:"* %h - %s (%an, %ad)" --date=short --no-merges 2>/dev/null | \
                 grep -v "release: " || echo "")
-
-            # Debug: log fallback usage
-            info "Generating changelog for first tag: using fallback - all commits up to $CURRENT_COMMIT"
+            info "Generating changelog for first tag: using all commits from $PRIMARY_BRANCH (first release)" >&2
         fi
     else
         # Subsequent tags - show commits between previous tag and current tag, excluding release preparation commits
         CHANGELOG_CONTENT=$(git -C "$WORKTREE_DIR" log "$PREVIOUS_TAG".."$CURRENT_COMMIT" --pretty=format:"* %h - %s (%an, %ad)" --date=short --no-merges | \
             grep -v "release: " || echo "")
 
-        # Debug: log the commit range being used
-        info "Generating changelog for subsequent tag: using commit range $PREVIOUS_TAG..$CURRENT_COMMIT"
+        # Debug: log the commit range being used (to stderr to avoid contaminating output)
+        info "Generating changelog for subsequent tag: using commit range $PREVIOUS_TAG..$CURRENT_COMMIT" >&2
     fi
 
     # Format the changelog entry with header
@@ -524,6 +782,7 @@ function writeChangelogToFile() {
     local WORKTREE_DIR="$2"
     local CHANGELOG_FILE="$WORKTREE_DIR/CHANGELOG.md"
     local TEMP_FILE="$WORKTREE_DIR/CHANGELOG.tmp"
+    local TEMP_EDIT_FILE="$WORKTREE_DIR/CHANGELOG_EDIT.tmp"
 
     # Clean up tag format for comparison (remove 'v' prefix if present)
     local CLEAN_TAG="$TAG"
@@ -535,25 +794,38 @@ function writeChangelogToFile() {
     local NEW_ENTRY
     NEW_ENTRY=$(generateChangelogEntry "$TAG" "$WORKTREE_DIR")
 
-    # Create or update CHANGELOG.md
+    # Create or update CHANGELOG.md with interactive editing
     if [ -f "$CHANGELOG_FILE" ]; then
         # Check if this exact version already exists in the changelog
         # Use the clean tag for comparison to handle both v1.0.0 and 1.0.0 formats
         if grep -q "## \[$CLEAN_TAG\]" "$CHANGELOG_FILE"; then
-            info "Entry for $CLEAN_TAG already exists in CHANGELOG.md, skipping"
+            info "Entry for $CLEAN_TAG already exists in CHANGELOG.md, skipping" >&2
             return 0
         fi
 
-        # Insert new entry after the header but before existing entries
-        {
-            # Extract header (everything before the first ## entry)
-            sed '/^## \[/,$d' "$CHANGELOG_FILE"
-            echo "$NEW_ENTRY"
-            # Extract existing entries (everything from the first ## entry onwards)
-            sed -n '/^## \[/,$p' "$CHANGELOG_FILE"
-        } > "$TEMP_FILE"
-        mv "$TEMP_FILE" "$CHANGELOG_FILE"
-        info "Updated existing CHANGELOG.md with entry for $CLEAN_TAG"
+        # Check if there's an "Unreleased" section that should be replaced
+        if grep -q "## \[Unreleased\]" "$CHANGELOG_FILE"; then
+            # Replace the Unreleased section with the actual tag entry using awk
+            awk -v new_entry="$NEW_ENTRY" '
+                /^## \[Unreleased\]/ {
+                    # Found Unreleased section, print new entry instead and skip until next ## section
+                    print new_entry
+                    while ((getline > 0) && !/^## \[/) continue
+                    if (/^## \[/) print  # Print the line that broke the loop (next section header)
+                    next
+                }
+                { print }
+            ' "$CHANGELOG_FILE" > "$TEMP_EDIT_FILE"
+        else
+            # Insert new entry after the header but before existing entries
+            {
+                # Extract header (everything before the first ## entry)
+                sed '/^## \[/,$d' "$CHANGELOG_FILE"
+                echo "$NEW_ENTRY"
+                # Extract existing entries (everything from the first ## entry onwards)
+                sed -n '/^## \[/,$p' "$CHANGELOG_FILE"
+            } > "$TEMP_EDIT_FILE"
+        fi
     else
         # Create new changelog file
         {
@@ -565,8 +837,28 @@ function writeChangelogToFile() {
             echo "and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html)."
             echo ""
             echo "$NEW_ENTRY"
-        } > "$CHANGELOG_FILE"
-        info "Created new CHANGELOG.md with entry for $CLEAN_TAG"
+        } > "$TEMP_EDIT_FILE"
+    fi
+
+    # Open changelog in nano for user editing
+    info "Opening changelog for review and editing..." >&2
+    echo "Review and edit the changelog below. Save (Ctrl+O) and exit (Ctrl+X) when ready to proceed." >&2
+    echo >&2
+
+    if command -v nano >/dev/null 2>&1; then
+        nano "$TEMP_EDIT_FILE"
+    else
+        warning "nano editor not found, using vi instead" >&2
+        vi "$TEMP_EDIT_FILE"
+    fi
+
+    # Move the edited changelog to final location
+    mv "$TEMP_EDIT_FILE" "$CHANGELOG_FILE"
+
+    if [ -f "$CHANGELOG_FILE" ]; then
+        info "Updated CHANGELOG.md with entry for $CLEAN_TAG" >&2
+    else
+        info "Created new CHANGELOG.md with entry for $CLEAN_TAG" >&2
     fi
 }
 
@@ -694,6 +986,125 @@ function getPrimaryBranch() {
         critical "could not find main or master branch"
         exit 1
     fi
+}
+
+function generateAndEditChangelogForReleaseBranch() {
+    local RELEASE="$1"
+    local WORKTREE_DIR="$2"
+    local CHANGELOG_FILE="$WORKTREE_DIR/CHANGELOG.md"
+    local TEMP_CHANGELOG="$WORKTREE_DIR/CHANGELOG.tmp"
+    local PRIMARY_BRANCH
+    PRIMARY_BRANCH=$(getPrimaryBranch)
+
+    info "Generating changelog content for release branch $RELEASE..."
+
+    # Get the highest existing release branch to determine commit range
+    # Note: We need to exclude the current release being created
+    local EXISTING_BRANCHES=()
+    mapfile -t EXISTING_BRANCHES < <(_git branch -a --format='%(refname:short)' | grep -E '^[0-9]+\.[0-9]+\.x$' | grep -v "^$RELEASE$" | sort -V -r)
+
+    local COMMIT_RANGE=""
+    local CHANGELOG_CONTENT=""
+
+    if [[ ${#EXISTING_BRANCHES[@]} -gt 0 ]]; then
+        # Use the highest existing release branch (excluding the one being created)
+        local HIGHEST_EXISTING_BRANCH="${EXISTING_BRANCHES[0]}"
+        info "Found highest existing release branch: $HIGHEST_EXISTING_BRANCH"
+
+        # Try to find the branch HEAD - check both local and remote references
+        local HIGHEST_BRANCH_HEAD=""
+        if _git rev-parse --verify "origin/$HIGHEST_EXISTING_BRANCH" >/dev/null 2>&1; then
+            HIGHEST_BRANCH_HEAD="origin/$HIGHEST_EXISTING_BRANCH"
+        elif _git rev-parse --verify "$HIGHEST_EXISTING_BRANCH" >/dev/null 2>&1; then
+            HIGHEST_BRANCH_HEAD="$HIGHEST_EXISTING_BRANCH"
+        else
+            warning "Could not find HEAD of highest existing release branch: $HIGHEST_EXISTING_BRANCH"
+            warning "Using all commits from primary branch instead"
+            HIGHEST_BRANCH_HEAD=""
+        fi
+
+        if [[ -n "$HIGHEST_BRANCH_HEAD" ]]; then
+            # Find the merge base (common ancestor) between the highest existing release branch and primary branch
+            local MERGE_BASE
+            MERGE_BASE=$(_git merge-base "$HIGHEST_BRANCH_HEAD" "$PRIMARY_BRANCH" 2>/dev/null)
+
+            if [[ -n "$MERGE_BASE" ]]; then
+                # Get commits from the merge base to current primary branch HEAD
+                # This gives us commits that were added to primary branch since the release branch was created
+                COMMIT_RANGE="$MERGE_BASE..$PRIMARY_BRANCH"
+                info "Using commit range: $MERGE_BASE..$PRIMARY_BRANCH (commits added to $PRIMARY_BRANCH since $HIGHEST_EXISTING_BRANCH was created)"
+            else
+                # Fallback: use commits from the release branch to primary branch
+                COMMIT_RANGE="$HIGHEST_BRANCH_HEAD..$PRIMARY_BRANCH"
+                info "Could not find merge base, using commit range: $COMMIT_RANGE"
+            fi
+        else
+            # Fallback: use all commits from primary branch
+            COMMIT_RANGE="$PRIMARY_BRANCH"
+            info "Using all commits from: $COMMIT_RANGE"
+        fi
+    else
+        # No existing release branches, include all commits from primary branch
+        COMMIT_RANGE="$PRIMARY_BRANCH"
+        info "No existing release branches found, using all commits from: $COMMIT_RANGE"
+    fi
+
+    # Generate changelog content from commits using the main repository (not worktree)
+    # This ensures we get the full commit history from the primary branch
+    info "Generating changelog from commit range: $COMMIT_RANGE"
+    CHANGELOG_CONTENT=$(_git log "$COMMIT_RANGE" --pretty=format:"* %h - %s (%an, %ad)" --date=short --no-merges 2>/dev/null | \
+        grep -v "release: " || echo "")
+
+    # If no content was generated, provide a fallback message
+    if [[ -z "$CHANGELOG_CONTENT" ]]; then
+        CHANGELOG_CONTENT="* No significant changes recorded"
+        warning "No commits found in range $COMMIT_RANGE, using fallback message"
+    else
+        info "Generated changelog with $(echo "$CHANGELOG_CONTENT" | wc -l) entries"
+    fi
+
+    # Create initial changelog content
+    # For release branches, we create a placeholder that will be replaced by actual tag entries
+    local RELEASE_DATE
+    RELEASE_DATE=$(date '+%Y-%m-%d')
+
+    {
+        echo "# Changelog"
+        echo ""
+        echo "All notable changes to this project will be documented in this file."
+        echo ""
+        echo "The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),"
+        echo "and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html)."
+        echo ""
+        echo "## [Unreleased] - Release branch $RELEASE"
+        echo ""
+        echo "### Changes planned for this release:"
+        echo ""
+        echo "$CHANGELOG_CONTENT"
+        echo ""
+        echo "<!-- Release tags will be added above this line -->"
+        echo ""
+    } > "$TEMP_CHANGELOG"
+
+    # Open changelog in nano for user editing
+    info "Opening changelog for review and editing..."
+    echo "Review and edit the changelog below. Save (Ctrl+O) and exit (Ctrl+X) when ready to proceed."
+    echo
+
+    if command -v nano >/dev/null 2>&1; then
+        nano "$TEMP_CHANGELOG"
+    else
+        warning "nano editor not found, using vi instead"
+        vi "$TEMP_CHANGELOG"
+    fi
+
+    # Move the edited changelog to final location
+    mv "$TEMP_CHANGELOG" "$CHANGELOG_FILE"
+
+    # Commit the changelog
+    git -C "$WORKTREE_DIR" add CHANGELOG.md
+    git -C "$WORKTREE_DIR" commit -m "release: Add changelog for release branch $RELEASE"
+    info "Committed changelog for release branch $RELEASE"
 }
 
 function getLatestReleaseBranch() {

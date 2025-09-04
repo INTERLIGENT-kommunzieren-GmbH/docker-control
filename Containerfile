@@ -8,6 +8,7 @@ RUN apk add --no-cache \
     netcat-openbsd \
     docker-cli \
     docker-cli-compose \
+    nano \
     rsync \
     p7zip \
     socat \
