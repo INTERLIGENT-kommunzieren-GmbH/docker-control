@@ -566,21 +566,13 @@ function _mergeReleaseToMain() {
     info "Target branch: $TARGET_BRANCH"
     newline
 
-    # Set up worktree directories
+    # Set up worktree directories - always use separate worktrees for both branches
     RELEASE_WORKTREE_DIR="$PROJECT_DIR/releases/$RELEASE_BRANCH"
+    TARGET_WORKTREE_DIR="$PROJECT_DIR/releases/$TARGET_BRANCH"
 
-    # Check if target branch is already checked out in main working directory
-    local CURRENT_BRANCH
-    CURRENT_BRANCH=$(_git branch --show-current)
-
-    if [[ "$CURRENT_BRANCH" == "$TARGET_BRANCH" ]]; then
-        # Use the main working directory as target
-        TARGET_WORKTREE_DIR="$PROJECT_DIR"
-        info "Using main working directory for target branch: $TARGET_BRANCH"
-    else
-        # Create a separate worktree for target branch
-        TARGET_WORKTREE_DIR="$PROJECT_DIR/releases/$TARGET_BRANCH"
-    fi
+    info "Using separate worktrees for both source and target branches"
+    info "Release worktree: $RELEASE_WORKTREE_DIR"
+    info "Target worktree: $TARGET_WORKTREE_DIR"
 
     # Create releases directory if it doesn't exist
     mkdir -p "$PROJECT_DIR/releases"
@@ -613,25 +605,14 @@ function _mergeReleaseToMain() {
         exit 1
     fi
 
-    # Create worktree for target branch (only if not using main working directory)
-    if [[ "$TARGET_WORKTREE_DIR" != "$PROJECT_DIR" ]]; then
-        # First check if the target branch exists locally, if not, track it from origin
-        if ! _git rev-parse --verify "$TARGET_BRANCH" >/dev/null 2>&1; then
-            if _git rev-parse --verify "origin/$TARGET_BRANCH" >/dev/null 2>&1; then
-                info "Creating local tracking branch for $TARGET_BRANCH"
-                _git branch "$TARGET_BRANCH" "origin/$TARGET_BRANCH"
-            else
-                critical "Target branch $TARGET_BRANCH not found locally or on origin"
-                # Clean up release worktree
-                if ! _git worktree remove "$RELEASE_WORKTREE_DIR" --force; then
-                    warning "Could not remove release worktree automatically: $RELEASE_WORKTREE_DIR"
-                fi
-                exit 1
-            fi
-        fi
-
-        if ! _git worktree add "$TARGET_WORKTREE_DIR" "$TARGET_BRANCH"; then
-            critical "Error: Failed to create target worktree for $TARGET_BRANCH"
+    # Create worktree for target branch - always create separate worktree
+    # First check if the target branch exists locally, if not, track it from origin
+    if ! _git rev-parse --verify "$TARGET_BRANCH" >/dev/null 2>&1; then
+        if _git rev-parse --verify "origin/$TARGET_BRANCH" >/dev/null 2>&1; then
+            info "Creating local tracking branch for $TARGET_BRANCH"
+            _git branch "$TARGET_BRANCH" "origin/$TARGET_BRANCH"
+        else
+            critical "Target branch $TARGET_BRANCH not found locally or on origin"
             # Clean up release worktree
             if ! _git worktree remove "$RELEASE_WORKTREE_DIR" --force; then
                 warning "Could not remove release worktree automatically: $RELEASE_WORKTREE_DIR"
@@ -640,31 +621,27 @@ function _mergeReleaseToMain() {
         fi
     fi
 
-    # Pull latest changes in target worktree
+    if ! _git worktree add "$TARGET_WORKTREE_DIR" "$TARGET_BRANCH"; then
+        critical "Error: Failed to create target worktree for $TARGET_BRANCH"
+        # Clean up release worktree
+        if ! _git worktree remove "$RELEASE_WORKTREE_DIR" --force; then
+            warning "Could not remove release worktree automatically: $RELEASE_WORKTREE_DIR"
+        fi
+        exit 1
+    fi
+
+    # Pull latest changes in target worktree - always use separate worktree
     info "Updating target worktree with latest changes from origin/$TARGET_BRANCH"
-    if [[ "$TARGET_WORKTREE_DIR" == "$PROJECT_DIR" ]]; then
-        # If using main working directory, pull directly
-        if ! _git pull origin "$TARGET_BRANCH"; then
-            critical "Failed to pull latest changes for target branch $TARGET_BRANCH in main working directory"
-            # Clean up release worktree
-            if ! _git worktree remove "$RELEASE_WORKTREE_DIR" --force; then
-                warning "Could not remove release worktree automatically: $RELEASE_WORKTREE_DIR"
-            fi
-            exit 1
+    if ! git -C "$TARGET_WORKTREE_DIR" pull origin "$TARGET_BRANCH"; then
+        critical "Failed to pull latest changes for target branch $TARGET_BRANCH"
+        # Clean up worktrees
+        if ! _git worktree remove "$RELEASE_WORKTREE_DIR" --force; then
+            warning "Could not remove release worktree automatically: $RELEASE_WORKTREE_DIR"
         fi
-    else
-        # If using separate worktree, pull in that directory
-        if ! git -C "$TARGET_WORKTREE_DIR" pull origin "$TARGET_BRANCH"; then
-            critical "Failed to pull latest changes for target branch $TARGET_BRANCH"
-            # Clean up worktrees
-            if ! _git worktree remove "$RELEASE_WORKTREE_DIR" --force; then
-                warning "Could not remove release worktree automatically: $RELEASE_WORKTREE_DIR"
-            fi
-            if ! _git worktree remove "$TARGET_WORKTREE_DIR" --force; then
-                warning "Could not remove target worktree automatically: $TARGET_WORKTREE_DIR"
-            fi
-            exit 1
+        if ! _git worktree remove "$TARGET_WORKTREE_DIR" --force; then
+            warning "Could not remove target worktree automatically: $TARGET_WORKTREE_DIR"
         fi
+        exit 1
     fi
 
     info "Both worktrees updated successfully with latest remote changes"
@@ -673,11 +650,7 @@ function _mergeReleaseToMain() {
     local RELEASE_HEAD
     local TARGET_HEAD
     RELEASE_HEAD=$(git -C "$RELEASE_WORKTREE_DIR" rev-parse HEAD)
-    if [[ "$TARGET_WORKTREE_DIR" == "$PROJECT_DIR" ]]; then
-        TARGET_HEAD=$(_git rev-parse HEAD)
-    else
-        TARGET_HEAD=$(git -C "$TARGET_WORKTREE_DIR" rev-parse HEAD)
-    fi
+    TARGET_HEAD=$(git -C "$TARGET_WORKTREE_DIR" rev-parse HEAD)
 
     # Get commits that exist in release branch but not in target branch
     # Use the release worktree for commit analysis to ensure we're using the updated state
@@ -722,15 +695,12 @@ function _mergeReleaseToMain() {
             info "No commits found in the range between $TARGET_BRANCH and $RELEASE_BRANCH"
             info "The branches may already be in sync, or $RELEASE_BRANCH may be behind $TARGET_BRANCH"
         fi
-        # Clean up worktrees
+        # Clean up worktrees - always clean up both worktrees
         if ! _git worktree remove "$RELEASE_WORKTREE_DIR" --force; then
             warning "Could not remove release worktree automatically: $RELEASE_WORKTREE_DIR"
         fi
-        # Only remove target worktree if it's not the main working directory
-        if [[ "$TARGET_WORKTREE_DIR" != "$PROJECT_DIR" ]]; then
-            if ! _git worktree remove "$TARGET_WORKTREE_DIR" --force; then
-                warning "Could not remove target worktree automatically: $TARGET_WORKTREE_DIR"
-            fi
+        if ! _git worktree remove "$TARGET_WORKTREE_DIR" --force; then
+            warning "Could not remove target worktree automatically: $TARGET_WORKTREE_DIR"
         fi
         return 0
     fi
@@ -748,15 +718,12 @@ function _mergeReleaseToMain() {
     # Confirm before proceeding (only if we have commits)
     if [[ $(confirm "Proceed with cherry-picking these commits?") != "y" ]]; then
         info "Cherry-pick operation cancelled"
-        # Clean up worktrees
+        # Clean up worktrees - always clean up both worktrees
         if ! _git worktree remove "$RELEASE_WORKTREE_DIR" --force; then
             warning "Could not remove release worktree automatically: $RELEASE_WORKTREE_DIR"
         fi
-        # Only remove target worktree if it's not the main working directory
-        if [[ "$TARGET_WORKTREE_DIR" != "$PROJECT_DIR" ]]; then
-            if ! _git worktree remove "$TARGET_WORKTREE_DIR" --force; then
-                warning "Could not remove target worktree automatically: $TARGET_WORKTREE_DIR"
-            fi
+        if ! _git worktree remove "$TARGET_WORKTREE_DIR" --force; then
+            warning "Could not remove target worktree automatically: $TARGET_WORKTREE_DIR"
         fi
         return 0
     fi
@@ -770,18 +737,10 @@ function _mergeReleaseToMain() {
             COMMIT_MESSAGE=$(git -C "$RELEASE_WORKTREE_DIR" log -1 --pretty=format:"%s" "$commit_hash")
             info "Cherry-picking: $commit_hash - $COMMIT_MESSAGE"
 
-            # Use appropriate Git context based on whether we're using main working directory or separate worktree
+            # Always use separate worktree for cherry-pick operation
             local CHERRY_PICK_SUCCESS=false
-            if [[ "$TARGET_WORKTREE_DIR" == "$PROJECT_DIR" ]]; then
-                # Using main working directory - use _git function
-                if _git cherry-pick "$commit_hash"; then
-                    CHERRY_PICK_SUCCESS=true
-                fi
-            else
-                # Using separate worktree - use git -C
-                if git -C "$TARGET_WORKTREE_DIR" cherry-pick "$commit_hash"; then
-                    CHERRY_PICK_SUCCESS=true
-                fi
+            if git -C "$TARGET_WORKTREE_DIR" cherry-pick "$commit_hash"; then
+                CHERRY_PICK_SUCCESS=true
             fi
 
             if [[ "$CHERRY_PICK_SUCCESS" != "true" ]]; then
@@ -802,41 +761,26 @@ function _mergeReleaseToMain() {
                 CHOICE=$(choose "Conflict resolution" CONFLICT_OPTIONS CONFLICT_ORDER)
 
                 if [[ "$CHOICE" == "abort" ]]; then
-                    if [[ "$TARGET_WORKTREE_DIR" == "$PROJECT_DIR" ]]; then
-                        _git cherry-pick --abort
-                    else
-                        git -C "$TARGET_WORKTREE_DIR" cherry-pick --abort
-                    fi
+                    git -C "$TARGET_WORKTREE_DIR" cherry-pick --abort
                     critical "Cherry-pick operation aborted"
-                    # Clean up worktrees
+                    # Clean up worktrees - always clean up both worktrees
                     if ! _git worktree remove "$RELEASE_WORKTREE_DIR" --force; then
                         warning "Could not remove release worktree automatically: $RELEASE_WORKTREE_DIR"
                     fi
-                    # Only remove target worktree if it's not the main working directory
-                    if [[ "$TARGET_WORKTREE_DIR" != "$PROJECT_DIR" ]]; then
-                        if ! _git worktree remove "$TARGET_WORKTREE_DIR" --force; then
-                            warning "Could not remove target worktree automatically: $TARGET_WORKTREE_DIR"
-                        fi
+                    if ! _git worktree remove "$TARGET_WORKTREE_DIR" --force; then
+                        warning "Could not remove target worktree automatically: $TARGET_WORKTREE_DIR"
                     fi
                     exit 1
                 elif [[ "$CHOICE" == "mergetool" ]]; then
                     # Loop until conflicts are resolved or user aborts
                     while true; do
                         info "Starting merge tool in target worktree..."
-                        if [[ "$TARGET_WORKTREE_DIR" == "$PROJECT_DIR" ]]; then
-                            _git mergetool
-                        else
-                            git -C "$TARGET_WORKTREE_DIR" mergetool
-                        fi
+                        git -C "$TARGET_WORKTREE_DIR" mergetool
 
                         # Check if conflicts are resolved by checking git status
                         # Look for unmerged paths (UU, AA, DD) and also check for any remaining conflicted files
                         local CONFLICT_STATUS
-                        if [[ "$TARGET_WORKTREE_DIR" == "$PROJECT_DIR" ]]; then
-                            CONFLICT_STATUS=$(_git status --porcelain)
-                        else
-                            CONFLICT_STATUS=$(git -C "$TARGET_WORKTREE_DIR" status --porcelain)
-                        fi
+                        CONFLICT_STATUS=$(git -C "$TARGET_WORKTREE_DIR" status --porcelain)
 
                         if echo "$CONFLICT_STATUS" | grep -q "^UU\|^AA\|^DD"; then
                             warning "Merge conflicts still exist. Choose an option:"
@@ -866,21 +810,14 @@ function _mergeReleaseToMain() {
                             RETRY_CHOICE=$(choose "Conflict resolution" RETRY_OPTIONS RETRY_ORDER)
 
                             if [[ "$RETRY_CHOICE" == "abort" ]]; then
-                                if [[ "$TARGET_WORKTREE_DIR" == "$PROJECT_DIR" ]]; then
-                                    _git cherry-pick --abort
-                                else
-                                    git -C "$TARGET_WORKTREE_DIR" cherry-pick --abort
-                                fi
+                                git -C "$TARGET_WORKTREE_DIR" cherry-pick --abort
                                 critical "Cherry-pick operation aborted"
-                                # Clean up worktrees
+                                # Clean up worktrees - always clean up both worktrees
                                 if ! _git worktree remove "$RELEASE_WORKTREE_DIR" --force; then
                                     warning "Could not remove release worktree automatically: $RELEASE_WORKTREE_DIR"
                                 fi
-                                # Only remove target worktree if it's not the main working directory
-                                if [[ "$TARGET_WORKTREE_DIR" != "$PROJECT_DIR" ]]; then
-                                    if ! _git worktree remove "$TARGET_WORKTREE_DIR" --force; then
-                                        warning "Could not remove target worktree automatically: $TARGET_WORKTREE_DIR"
-                                    fi
+                                if ! _git worktree remove "$TARGET_WORKTREE_DIR" --force; then
+                                    warning "Could not remove target worktree automatically: $TARGET_WORKTREE_DIR"
                                 fi
                                 exit 1
                             fi
@@ -889,54 +826,36 @@ function _mergeReleaseToMain() {
                             # All conflicts resolved, stage the resolved files
                             info "All conflicts resolved. Staging resolved files..."
                             local STAGING_SUCCESS=false
-                            if [[ "$TARGET_WORKTREE_DIR" == "$PROJECT_DIR" ]]; then
-                                if _git add .; then
-                                    STAGING_SUCCESS=true
-                                fi
-                            else
-                                if git -C "$TARGET_WORKTREE_DIR" add .; then
-                                    STAGING_SUCCESS=true
-                                fi
+                            if git -C "$TARGET_WORKTREE_DIR" add .; then
+                                STAGING_SUCCESS=true
                             fi
 
                             if [[ "$STAGING_SUCCESS" != "true" ]]; then
                                 critical "Failed to stage resolved files"
-                                # Clean up worktrees
+                                # Clean up worktrees - always clean up both worktrees
                                 if ! _git worktree remove "$RELEASE_WORKTREE_DIR" --force; then
                                     warning "Could not remove release worktree automatically: $RELEASE_WORKTREE_DIR"
                                 fi
-                                # Only remove target worktree if it's not the main working directory
-                                if [[ "$TARGET_WORKTREE_DIR" != "$PROJECT_DIR" ]]; then
-                                    if ! _git worktree remove "$TARGET_WORKTREE_DIR" --force; then
-                                        warning "Could not remove target worktree automatically: $TARGET_WORKTREE_DIR"
-                                    fi
+                                if ! _git worktree remove "$TARGET_WORKTREE_DIR" --force; then
+                                    warning "Could not remove target worktree automatically: $TARGET_WORKTREE_DIR"
                                 fi
                                 exit 1
                             fi
 
                             info "Continuing cherry-pick..."
                             local CONTINUE_SUCCESS=false
-                            if [[ "$TARGET_WORKTREE_DIR" == "$PROJECT_DIR" ]]; then
-                                if _git cherry-pick --continue; then
-                                    CONTINUE_SUCCESS=true
-                                fi
-                            else
-                                if git -C "$TARGET_WORKTREE_DIR" cherry-pick --continue; then
-                                    CONTINUE_SUCCESS=true
-                                fi
+                            if git -C "$TARGET_WORKTREE_DIR" cherry-pick --continue; then
+                                CONTINUE_SUCCESS=true
                             fi
 
                             if [[ "$CONTINUE_SUCCESS" != "true" ]]; then
                                 critical "Failed to continue cherry-pick. Please resolve manually in $TARGET_WORKTREE_DIR"
-                                # Clean up worktrees
+                                # Clean up worktrees - always clean up both worktrees
                                 if ! _git worktree remove "$RELEASE_WORKTREE_DIR" --force; then
                                     warning "Could not remove release worktree automatically: $RELEASE_WORKTREE_DIR"
                                 fi
-                                # Only remove target worktree if it's not the main working directory
-                                if [[ "$TARGET_WORKTREE_DIR" != "$PROJECT_DIR" ]]; then
-                                    if ! _git worktree remove "$TARGET_WORKTREE_DIR" --force; then
-                                        warning "Could not remove target worktree automatically: $TARGET_WORKTREE_DIR"
-                                    fi
+                                if ! _git worktree remove "$TARGET_WORKTREE_DIR" --force; then
+                                    warning "Could not remove target worktree automatically: $TARGET_WORKTREE_DIR"
                                 fi
                                 exit 1
                             fi
@@ -944,14 +863,8 @@ function _mergeReleaseToMain() {
                             # Push the resolved cherry-picked commit immediately
                             info "Pushing resolved cherry-picked commit to remote..."
                             local PUSH_SUCCESS=false
-                            if [[ "$TARGET_WORKTREE_DIR" == "$PROJECT_DIR" ]]; then
-                                if _git push origin "$TARGET_BRANCH"; then
-                                    PUSH_SUCCESS=true
-                                fi
-                            else
-                                if git -C "$TARGET_WORKTREE_DIR" push origin "$TARGET_BRANCH"; then
-                                    PUSH_SUCCESS=true
-                                fi
+                            if git -C "$TARGET_WORKTREE_DIR" push origin "$TARGET_BRANCH"; then
+                                PUSH_SUCCESS=true
                             fi
 
                             if [[ "$PUSH_SUCCESS" == "true" ]]; then
@@ -969,14 +882,8 @@ function _mergeReleaseToMain() {
                 # Push the cherry-picked commit immediately
                 info "Pushing cherry-picked commit to remote..."
                 local PUSH_SUCCESS=false
-                if [[ "$TARGET_WORKTREE_DIR" == "$PROJECT_DIR" ]]; then
-                    if _git push origin "$TARGET_BRANCH"; then
-                        PUSH_SUCCESS=true
-                    fi
-                else
-                    if git -C "$TARGET_WORKTREE_DIR" push origin "$TARGET_BRANCH"; then
-                        PUSH_SUCCESS=true
-                    fi
+                if git -C "$TARGET_WORKTREE_DIR" push origin "$TARGET_BRANCH"; then
+                    PUSH_SUCCESS=true
                 fi
 
                 if [[ "$PUSH_SUCCESS" == "true" ]]; then
@@ -992,19 +899,14 @@ function _mergeReleaseToMain() {
     info "All commits from $RELEASE_BRANCH have been merged and pushed to $TARGET_BRANCH"
     newline
 
-    # Clean up worktrees
+    # Clean up worktrees - always clean up both worktrees
     if ! _git worktree remove "$RELEASE_WORKTREE_DIR" --force; then
         warning "Could not remove release worktree automatically: $RELEASE_WORKTREE_DIR"
     fi
-    # Only remove target worktree if it's not the main working directory
-    if [[ "$TARGET_WORKTREE_DIR" != "$PROJECT_DIR" ]]; then
-        if ! _git worktree remove "$TARGET_WORKTREE_DIR" --force; then
-            warning "Could not remove target worktree automatically: $TARGET_WORKTREE_DIR"
-        fi
-        info "Worktrees cleaned up successfully"
-    else
-        info "Release worktree cleaned up successfully"
+    if ! _git worktree remove "$TARGET_WORKTREE_DIR" --force; then
+        warning "Could not remove target worktree automatically: $TARGET_WORKTREE_DIR"
     fi
+    info "Worktrees cleaned up successfully"
 }
 
 function _update() {
