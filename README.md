@@ -61,7 +61,7 @@ docker control create-control-script my-command
 ```
 
 #### `deploy <env>`
-Deploy a selected release to the specified environment. The release/branch is selected interactively from available options. Includes comprehensive error handling, configuration validation, and deployment confirmation.
+Deploy a selected release to the specified environment. The release/tag is selected interactively from available options. Includes comprehensive error handling, configuration validation, and deployment confirmation.
 
 ```bash
 docker control deploy production
@@ -234,12 +234,58 @@ The plugin requires projects to be managed by the Docker control plugin (identif
 
 ### Deployment Configuration
 
-The plugin supports deployment to multiple environments through a `.deploy.conf` file. This file is automatically created when you first run `add-deploy-config` and contains:
+The plugin supports deployment to multiple environments through JSON configuration files (`.deploy.json`). The configuration file can be located in either:
 
-- Environment-specific branch mappings
-- Merge stop configurations
-- User and domain settings for each environment
-- Service root paths
+- `htdocs/.docker-control/.deploy.json` (preferred location)
+- `.deploy.json` (project root fallback)
+
+The JSON configuration format provides:
+
+- **Structured configuration**: Well-defined schema with validation
+- **Environment metadata**: Descriptions, tags, and ordering
+- **Default values**: Configurable defaults for new environments
+- **Better error handling**: Clear validation messages
+- **Future extensibility**: Easy to add new features
+
+Example `.deploy.json` structure:
+
+```json
+{
+  "version": "1.0",
+  "environments": {
+    "production": {
+      "branch": "env/production",
+      "user": "deploy",
+      "domain": "production.example.com",
+      "serviceRoot": "/var/www/html",
+      "description": "Production environment - stable releases only",
+      "tags": ["production", "critical"]
+    },
+    "staging": {
+      "branch": "env/staging",
+      "user": "deploy",
+      "domain": "staging.projects.interligent.com",
+      "serviceRoot": "/var/www/html",
+      "description": "Staging environment for testing",
+      "tags": ["staging", "testing"]
+    }
+  },
+  "environmentOrder": ["production", "staging"],
+  "defaults": {
+    "serviceRoot": "/var/www/html",
+    "domainSuffix": ".projects.interligent.com"
+  }
+}
+```
+
+#### Configuration Fields
+
+The JSON format supports the following configuration fields:
+
+- **Environment-specific branch mappings**: Default branch for each environment
+- **User and domain settings**: SSH credentials and target servers for each environment
+- **Service root paths**: Deployment directory on target servers
+- **Environment metadata**: Descriptions and categorization
 
 The `merge` command uses this configuration to automatically merge branches between environments in the correct order.
 
@@ -269,9 +315,9 @@ When you run `docker control help`, you'll see comprehensive project status info
 - **Remote tracking**: Shows configured remote repositories
 
 #### Deployment Configuration Status
-- **Configuration file status**: Whether `.deploy.conf` exists and is valid
+- **Configuration file status**: Whether JSON deployment configuration exists and is valid
 - **Configured environments**: List of available deployment environments
-- **Configuration validation**: Alerts for malformed configuration files
+- **Configuration validation**: Alerts for malformed JSON configuration files
 
 #### Docker Container Status
 - **Docker availability**: Whether Docker is installed and running
@@ -311,7 +357,7 @@ The `deploy` command includes significant improvements:
 - **Environment validation**: Verifies deployment environment exists and is properly configured
 - **Configuration loading**: Robust loading and validation of deployment configuration files
 - **Required variables**: Validates all necessary deployment variables are present
-- **Interactive release selection**: Choose from available releases/branches for deployment
+- **Interactive release selection**: Choose from available releases/tags for deployment
 
 #### Error Handling and Recovery
 - **Detailed error messages**: Specific guidance for different failure scenarios

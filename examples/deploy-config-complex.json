@@ -1,0 +1,47 @@
+{
+  "version": "1.0",
+  "environments": {
+    "production": {
+      "branch": "env/production",
+      "user": "deploy",
+      "domain": "production.example.com",
+      "serviceRoot": "/var/www/html",
+      "description": "Production environment - stable releases only",
+      "tags": ["production", "critical", "monitored"]
+    },
+    "staging": {
+      "branch": "env/staging",
+      "user": "deploy",
+      "domain": "staging.projects.interligent.com",
+      "serviceRoot": "/var/www/html",
+      "description": "Staging environment for testing and validation",
+      "tags": ["staging", "testing"]
+    },
+    "development": {
+      "branch": "develop",
+      "user": "dev",
+      "domain": "dev.projects.interligent.com",
+      "serviceRoot": "/opt/app",
+      "description": "Development environment for feature testing",
+      "tags": ["development", "unstable"]
+    },
+    "qa": {
+      "branch": "env/qa",
+      "user": "qa",
+      "domain": "qa.example.com",
+      "serviceRoot": "/var/www/html",
+      "description": "Quality assurance environment",
+      "tags": ["qa", "testing", "automated"]
+    }
+  },
+  "environmentOrder": ["development", "qa", "staging", "production"],
+  "defaults": {
+    "serviceRoot": "/var/www/html",
+    "domainSuffix": ".projects.interligent.com"
+  },
+  "metadata": {
+    "createdAt": "2025-01-08T10:30:00Z",
+    "lastModified": "2025-01-08T11:45:00Z",
+    "createdBy": "docker-control-plugin"
+  }
+}

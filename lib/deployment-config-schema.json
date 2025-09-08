@@ -1,0 +1,156 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Docker Control Plugin Deployment Configuration",
+  "description": "Configuration schema for deployment environments in the Docker Control Plugin",
+  "type": "object",
+  "properties": {
+    "version": {
+      "type": "string",
+      "description": "Configuration format version",
+      "enum": ["1.0"],
+      "default": "1.0"
+    },
+    "environments": {
+      "type": "object",
+      "description": "Deployment environment configurations",
+      "patternProperties": {
+        "^[a-zA-Z0-9_-]+$": {
+          "type": "object",
+          "description": "Individual environment configuration",
+          "properties": {
+            "branch": {
+              "type": "string",
+              "description": "Default branch for this environment (e.g., 'env/production', 'main')",
+              "pattern": "^[a-zA-Z0-9/_-]+$",
+              "examples": ["env/production", "env/staging", "main", "develop"]
+            },
+
+            "user": {
+              "type": "string",
+              "description": "SSH username for deployment to this environment",
+              "pattern": "^[a-zA-Z0-9_-]+$",
+              "minLength": 1,
+              "examples": ["deploy", "www-data", "ubuntu"]
+            },
+            "domain": {
+              "type": "string",
+              "description": "Domain or hostname for deployment target",
+              "format": "hostname",
+              "examples": ["production.example.com", "staging.projects.interligent.com"]
+            },
+            "serviceRoot": {
+              "type": "string",
+              "description": "Root directory path on the target server where the application will be deployed",
+              "pattern": "^/.*",
+              "default": "/var/www/html",
+              "examples": ["/var/www/html", "/opt/app", "/home/deploy/app"]
+            },
+            "description": {
+              "type": "string",
+              "description": "Optional description of this environment",
+              "examples": ["Production environment", "Staging environment for testing"]
+            },
+            "tags": {
+              "type": "array",
+              "description": "Optional tags for categorizing environments",
+              "items": {
+                "type": "string",
+                "pattern": "^[a-zA-Z0-9_-]+$"
+              },
+              "examples": [["production", "critical"], ["staging", "testing"]]
+            }
+          },
+          "required": ["user", "domain"],
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false,
+      "minProperties": 1
+    },
+    "environmentOrder": {
+      "type": "array",
+      "description": "Preferred order for displaying environments in interactive selections",
+      "items": {
+        "type": "string",
+        "pattern": "^[a-zA-Z0-9_-]+$"
+      },
+      "uniqueItems": true
+    },
+    "defaults": {
+      "type": "object",
+      "description": "Default values for new environments",
+      "properties": {
+        "serviceRoot": {
+          "type": "string",
+          "description": "Default service root path for new environments",
+          "pattern": "^/.*",
+          "default": "/var/www/html"
+        },
+
+        "domainSuffix": {
+          "type": "string",
+          "description": "Default domain suffix for new environments (e.g., '.projects.interligent.com')",
+          "examples": [".projects.interligent.com", ".example.com"]
+        }
+      },
+      "additionalProperties": false
+    },
+    "metadata": {
+      "type": "object",
+      "description": "Additional metadata about the configuration",
+      "properties": {
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "When this configuration was first created"
+        },
+        "lastModified": {
+          "type": "string",
+          "format": "date-time",
+          "description": "When this configuration was last modified"
+        },
+        "createdBy": {
+          "type": "string",
+          "description": "Tool or user that created this configuration",
+          "default": "docker-control-plugin"
+        }
+      },
+      "additionalProperties": false
+    }
+  },
+  "required": ["version", "environments"],
+  "additionalProperties": false,
+  "examples": [
+    {
+      "version": "1.0",
+      "environments": {
+        "production": {
+          "branch": "env/production",
+          "user": "deploy",
+          "domain": "production.example.com",
+          "serviceRoot": "/var/www/html",
+          "description": "Production environment",
+          "tags": ["production", "critical"]
+        },
+        "staging": {
+          "branch": "env/staging",
+          "user": "deploy",
+          "domain": "staging.projects.interligent.com",
+          "serviceRoot": "/var/www/html",
+          "description": "Staging environment for testing",
+          "tags": ["staging", "testing"]
+        }
+      },
+      "environmentOrder": ["production", "staging"],
+      "defaults": {
+        "serviceRoot": "/var/www/html",
+        "domainSuffix": ".projects.interligent.com"
+      },
+      "metadata": {
+        "createdAt": "2025-01-08T10:30:00Z",
+        "lastModified": "2025-01-08T10:30:00Z",
+        "createdBy": "docker-control-plugin"
+      }
+    }
+  ]
+}

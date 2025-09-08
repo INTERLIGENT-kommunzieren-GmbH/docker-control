@@ -1,0 +1,15 @@
+{
+  "version": "1.0",
+  "environments": {
+    "production": {
+      "user": "deploy",
+      "domain": "production.example.com",
+      "description": "Production environment"
+    }
+  },
+  "metadata": {
+    "createdAt": "2025-01-08T10:30:00Z",
+    "lastModified": "2025-01-08T10:30:00Z",
+    "createdBy": "docker-control-plugin"
+  }
+}

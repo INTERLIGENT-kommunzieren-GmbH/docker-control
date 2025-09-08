@@ -1,10 +1,19 @@
 #!/bin/bash
 
+# Source JSON configuration functions
+. "$LIB_DIR/json-config-functions.sh"
+
 function _addDeployConfig() {
-    if [[ ! -f "$PROJECT_DIR/.deploy.conf" ]]; then
-        createDeployConfig
+    # Check for existing JSON configuration file
+    local CONFIG_FILE
+    CONFIG_FILE=$(getJsonConfigFile "$PROJECT_DIR" 2>/dev/null)
+
+    if [[ -n "$CONFIG_FILE" ]]; then
+        # JSON configuration exists, add to it
+        addJsonDeployConfig "$CONFIG_FILE"
     else
-        addDeployConfig
+        # No configuration exists, create new JSON configuration
+        createJsonDeployConfig
     fi
 }
 
@@ -124,24 +133,39 @@ function _deploy() {
     fi
 
     # Load deployment configuration
-    if [[ -z "$DEPLOY_ENVS" ]]; then
-        if [[ ! -f "$PROJECT_DIR/.deploy.conf" ]]; then
+    local CONFIG_FILE
+
+    if [[ -z "$DEPLOY_ENVS" && -z "$JSON_DEPLOY_ENVS" ]]; then
+        CONFIG_FILE=$(getJsonConfigFile "$PROJECT_DIR" 2>/dev/null)
+
+        if [[ -z "$CONFIG_FILE" ]]; then
             info "No deployment configuration found. Creating one..."
-            createDeployConfig
+            createJsonDeployConfig
+            # Get the config file path after creation
+            CONFIG_FILE=$(getJsonConfigFile "$PROJECT_DIR")
+            if [[ -z "$CONFIG_FILE" ]]; then
+                critical "Failed to locate created configuration file"
+                exit 1
+            fi
         fi
 
-        # Source the configuration file with error handling
-        if ! . "$PROJECT_DIR/.deploy.conf"; then
-            critical "Failed to load deployment configuration from $PROJECT_DIR/.deploy.conf"
+        if ! loadJsonConfig "$CONFIG_FILE"; then
+            critical "Failed to load JSON deployment configuration from $CONFIG_FILE"
             critical "The configuration file may be malformed"
             exit 1
         fi
+
+        # Copy JSON config to legacy format for compatibility with existing deployment code
+        declare -gA DEPLOY_ENVS
+        for env in "${!JSON_DEPLOY_ENVS[@]}"; do
+            DEPLOY_ENVS["$env"]="${JSON_DEPLOY_ENVS[$env]}"
+        done
     fi
 
-    # Validate that DEPLOY_ENVS was loaded properly
+    # Validate that configuration was loaded properly
     if [[ -z "$DEPLOY_ENVS" ]]; then
         critical "Deployment configuration is empty or malformed"
-        critical "Please check $PROJECT_DIR/.deploy.conf"
+        critical "Please check $CONFIG_FILE"
         exit 1
     fi
 
@@ -162,7 +186,6 @@ function _deploy() {
 
     # Load environment-specific configuration
     local BRANCH
-    local ALLOW_BRANCH_DEPLOYMENT
     local USER
     local DOMAIN
     local SERVICE_ROOT
@@ -201,7 +224,7 @@ function _deploy() {
 
     # Select release/tag for deployment
     info "Selecting release for deployment..."
-    RELEASE=$(select_release_tag "$ALLOW_BRANCH_DEPLOYMENT")
+    RELEASE=$(select_release_tag)
 
     # Check if release selection was successful
     if [[ $? -ne 0 ]] || [[ -z "$RELEASE" ]]; then
@@ -249,10 +272,6 @@ function addDeployConfig() {
 
     local BRANCH
     input -l "branch" -d "env/$ENV" -r BRANCH
-    local ALLOW_BRANCH_DEPLOYMENT="n"
-    if [[ -n "$BRANCH" ]]; then
-        ALLOW_BRANCH_DEPLOYMENT=$(confirm -n "Is this an unstable environment?")
-    fi
 
     local USER
     input -n -l "user" -r USER
@@ -261,7 +280,7 @@ function addDeployConfig() {
     input -n -l "server root" -d "/var/www/html" -r SERVICE_ROOT
 
     cat <<EOF | tee -a "$PROJECT_DIR/.deploy.conf" 1>/dev/null
-DEPLOY_ENVS["$ENV"]="BRANCH=$BRANCH ALLOW_BRANCH_DEPLOYMENT=$ALLOW_BRANCH_DEPLOYMENT USER=$USER DOMAIN=$DOMAIN SERVICE_ROOT=$SERVICE_ROOT"
+DEPLOY_ENVS["$ENV"]="BRANCH=$BRANCH USER=$USER DOMAIN=$DOMAIN SERVICE_ROOT=$SERVICE_ROOT"
 DEPLOY_ENVS_ORDER+=("$ENV")
 
 EOF
@@ -274,6 +293,67 @@ declare -A DEPLOY_ENVS_ORDER
 
 EOF
     addDeployConfig
+}
+
+function createJsonDeployConfig() {
+    local CONFIG_FILE
+
+    # Check for .docker-control directory first, fallback to project root
+    if [[ -d "$PROJECT_DIR/htdocs/.docker-control" ]]; then
+        CONFIG_FILE="$PROJECT_DIR/htdocs/.docker-control/.deploy.json"
+        # Ensure the directory is accessible
+        if [[ ! -w "$PROJECT_DIR/htdocs/.docker-control" ]]; then
+            critical "Directory $PROJECT_DIR/htdocs/.docker-control exists but is not writable"
+            exit 1
+        fi
+    else
+        CONFIG_FILE="$PROJECT_DIR/.deploy.json"
+    fi
+
+    info "Creating JSON deployment configuration at $CONFIG_FILE..."
+
+    if ! createJsonConfig "$CONFIG_FILE"; then
+        critical "Failed to create JSON deployment configuration"
+        exit 1
+    fi
+
+    addJsonDeployConfig "$CONFIG_FILE"
+}
+
+function addJsonDeployConfig() {
+    local CONFIG_FILE="$1"
+
+    # If no config file specified, determine the appropriate location
+    if [[ -z "$CONFIG_FILE" ]]; then
+        CONFIG_FILE=$(getJsonConfigFile "$PROJECT_DIR" 2>/dev/null)
+        if [[ -z "$CONFIG_FILE" ]]; then
+            critical "No JSON configuration file found"
+            exit 1
+        fi
+    fi
+
+    local ENV
+    input -n -l "environment" -r ENV
+
+    local BRANCH
+    input -l "branch" -d "env/$ENV" -r BRANCH
+
+    local USER
+    input -n -l "user" -r USER
+    local DOMAIN
+    input -n -l "domain" -d "$USER.projects.interligent.com" -r DOMAIN
+    local SERVICE_ROOT
+    input -n -l "server root" -d "/var/www/html" -r SERVICE_ROOT
+
+    local DESCRIPTION
+    input -l "description (optional)" -d "Deployment environment: $ENV" -r DESCRIPTION
+
+    if ! addJsonEnvironment "$CONFIG_FILE" "$ENV" "$BRANCH" "$USER" "$DOMAIN" "$SERVICE_ROOT" "$DESCRIPTION"; then
+        critical "Failed to add environment '$ENV' to JSON configuration"
+        exit 1
+    fi
+
+    info "Environment '$ENV' added to JSON deployment configuration"
 }
 
 function dockerCompose() {
@@ -409,15 +489,25 @@ function _showGitStatus() {
 }
 
 function _showDeploymentStatus() {
-    if [[ -f "$PROJECT_DIR/.deploy.conf" ]]; then
-        text "Deployment Config: {{ Foreground \"10\" \"✓ Configured\" }}"
+    local CONFIG_FILE
+    CONFIG_FILE=$(getJsonConfigFile "$PROJECT_DIR" 2>/dev/null)
+
+    if [[ -n "$CONFIG_FILE" ]]; then
+        text "Deployment Config: {{ Foreground \"10\" \"✓ Configured (JSON)\" }}"
 
         # Load deployment configuration to show environments
-        local DEPLOY_ENVS_LOCAL
-        if . "$PROJECT_DIR/.deploy.conf" 2>/dev/null && [[ -n "$DEPLOY_ENVS" ]]; then
-            DEPLOY_ENVS_LOCAL=("${!DEPLOY_ENVS[@]}")
+        local DEPLOY_ENVS_LOCAL=()
+        local CONFIG_VALID=false
+
+        if loadJsonConfig "$CONFIG_FILE" 2>/dev/null && [[ -n "$JSON_DEPLOY_ENVS" ]]; then
+            DEPLOY_ENVS_LOCAL=("${!JSON_DEPLOY_ENVS[@]}")
+            CONFIG_VALID=true
+        fi
+
+        if [[ "$CONFIG_VALID" == "true" ]]; then
             if [[ ${#DEPLOY_ENVS_LOCAL[@]} -gt 0 ]]; then
                 text "  Environments: {{ Foreground \"14\" \"${DEPLOY_ENVS_LOCAL[*]}\" }}"
+                text "  Configuration file: {{ Foreground \"14\" \"$(basename "$CONFIG_FILE")\" }}"
             else
                 text "  {{ Foreground \"11\" \"No environments configured\" }}"
             fi
@@ -1184,13 +1274,13 @@ function select_php_version() {
 }
 
 function select_release_tag() {
-    local INCLUDE_BRANCHES="$1"
     local TAGS
     local NEED_MANUAL_INPUT=false
     local ERROR_MESSAGE=""
 
     # Try to get tags, but handle potential Git/authentication errors
-    if ! TAGS="$(getLatestTags "$INCLUDE_BRANCHES" 2>/dev/null)"; then
+    # Only get releases/tags, no branches
+    if ! TAGS="$(getLatestTags "" 2>/dev/null)"; then
         NEED_MANUAL_INPUT=true
         ERROR_MESSAGE="Failed to fetch tags from repository (authentication or Git configuration issue)"
     elif [[ -z "${TAGS// }" ]]; then
