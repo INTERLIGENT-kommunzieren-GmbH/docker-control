@@ -617,14 +617,16 @@ function _install_plugin() {
     exit
 }
 
+
 function _mergeReleaseToMain() {
     local RELEASE_BRANCH
     local TARGET_BRANCH
+    local MERGE_BRANCH
     local COMMITS_TO_CHERRY_PICK
     local COMMIT_MESSAGE
     local CHOICE
     local RELEASE_WORKTREE_DIR
-    local TARGET_WORKTREE_DIR
+    local MERGE_WORKTREE_DIR
 
     sub_headline "Merge Release to Main"
     newline
@@ -654,15 +656,69 @@ function _mergeReleaseToMain() {
     fi
 
     info "Target branch: $TARGET_BRANCH"
+
+    # Create merge branch name following the convention: {source-branch-name}-merge
+    MERGE_BRANCH="${RELEASE_BRANCH}-merge"
+    info "Merge branch: $MERGE_BRANCH"
     newline
 
-    # Set up worktree directories - always use separate worktrees for both branches
-    RELEASE_WORKTREE_DIR="$PROJECT_DIR/releases/$RELEASE_BRANCH"
-    TARGET_WORKTREE_DIR="$PROJECT_DIR/releases/$TARGET_BRANCH"
+    # Pre-flight check: Ensure merge branch doesn't already exist
+    info "Checking for existing merge branch..."
+    local MERGE_BRANCH_EXISTS_LOCAL=false
+    local MERGE_BRANCH_EXISTS_REMOTE=false
 
-    info "Using separate worktrees for both source and target branches"
+    # Check if merge branch exists locally
+    if _git rev-parse --verify "$MERGE_BRANCH" >/dev/null 2>&1; then
+        MERGE_BRANCH_EXISTS_LOCAL=true
+    fi
+
+    # Check if merge branch exists remotely
+    if _git rev-parse --verify "origin/$MERGE_BRANCH" >/dev/null 2>&1; then
+        MERGE_BRANCH_EXISTS_REMOTE=true
+    fi
+
+    # If merge branch exists anywhere, abort with instructions
+    if [[ "$MERGE_BRANCH_EXISTS_LOCAL" == "true" ]] || [[ "$MERGE_BRANCH_EXISTS_REMOTE" == "true" ]]; then
+        critical "Merge branch '$MERGE_BRANCH' already exists!"
+        newline
+        if [[ "$MERGE_BRANCH_EXISTS_LOCAL" == "true" ]] && [[ "$MERGE_BRANCH_EXISTS_REMOTE" == "true" ]]; then
+            critical "The branch exists both locally and remotely."
+        elif [[ "$MERGE_BRANCH_EXISTS_LOCAL" == "true" ]]; then
+            critical "The branch exists locally."
+        else
+            critical "The branch exists remotely."
+        fi
+        newline
+        critical "This indicates there may be a pending merge operation."
+        critical "Please resolve this before proceeding:"
+        newline
+        text "Option 1: Complete the existing merge"
+        text "  - Check the existing merge branch for pending changes"
+        text "  - Create a merge/pull request if not already done"
+        text "  - Merge or close the existing request"
+        newline
+        text "Option 2: Delete the existing merge branch"
+        if [[ "$MERGE_BRANCH_EXISTS_LOCAL" == "true" ]]; then
+            text "  - Delete local branch: git branch -D $MERGE_BRANCH"
+        fi
+        if [[ "$MERGE_BRANCH_EXISTS_REMOTE" == "true" ]]; then
+            text "  - Delete remote branch: git push origin --delete $MERGE_BRANCH"
+        fi
+        newline
+        critical "Operation aborted to prevent conflicts."
+        exit 1
+    fi
+
+    info "✓ No existing merge branch found. Safe to proceed."
+    newline
+
+    # Set up worktree directories
+    RELEASE_WORKTREE_DIR="$PROJECT_DIR/releases/$RELEASE_BRANCH"
+    MERGE_WORKTREE_DIR="$PROJECT_DIR/releases/$MERGE_BRANCH"
+
+    info "Using separate worktrees for source and merge branches"
     info "Release worktree: $RELEASE_WORKTREE_DIR"
-    info "Target worktree: $TARGET_WORKTREE_DIR"
+    info "Merge worktree: $MERGE_WORKTREE_DIR"
 
     # Create releases directory if it doesn't exist
     mkdir -p "$PROJECT_DIR/releases"
@@ -695,8 +751,7 @@ function _mergeReleaseToMain() {
         exit 1
     fi
 
-    # Create worktree for target branch - always create separate worktree
-    # First check if the target branch exists locally, if not, track it from origin
+    # Ensure target branch exists locally and is up-to-date
     if ! _git rev-parse --verify "$TARGET_BRANCH" >/dev/null 2>&1; then
         if _git rev-parse --verify "origin/$TARGET_BRANCH" >/dev/null 2>&1; then
             info "Creating local tracking branch for $TARGET_BRANCH"
@@ -711,8 +766,10 @@ function _mergeReleaseToMain() {
         fi
     fi
 
-    if ! _git worktree add "$TARGET_WORKTREE_DIR" "$TARGET_BRANCH"; then
-        critical "Error: Failed to create target worktree for $TARGET_BRANCH"
+    # Fetch latest changes for target branch
+    info "Fetching latest changes for $TARGET_BRANCH"
+    if ! _git fetch origin "$TARGET_BRANCH"; then
+        critical "Failed to fetch latest changes for target branch $TARGET_BRANCH"
         # Clean up release worktree
         if ! _git worktree remove "$RELEASE_WORKTREE_DIR" --force; then
             warning "Could not remove release worktree automatically: $RELEASE_WORKTREE_DIR"
@@ -720,27 +777,24 @@ function _mergeReleaseToMain() {
         exit 1
     fi
 
-    # Pull latest changes in target worktree - always use separate worktree
-    info "Updating target worktree with latest changes from origin/$TARGET_BRANCH"
-    if ! git -C "$TARGET_WORKTREE_DIR" pull origin "$TARGET_BRANCH"; then
-        critical "Failed to pull latest changes for target branch $TARGET_BRANCH"
-        # Clean up worktrees
+    # Create merge branch from target branch
+    info "Creating merge branch $MERGE_BRANCH from $TARGET_BRANCH"
+    if ! _git worktree add "$MERGE_WORKTREE_DIR" -b "$MERGE_BRANCH" "origin/$TARGET_BRANCH"; then
+        critical "Error: Failed to create merge worktree for $MERGE_BRANCH"
+        # Clean up release worktree
         if ! _git worktree remove "$RELEASE_WORKTREE_DIR" --force; then
             warning "Could not remove release worktree automatically: $RELEASE_WORKTREE_DIR"
-        fi
-        if ! _git worktree remove "$TARGET_WORKTREE_DIR" --force; then
-            warning "Could not remove target worktree automatically: $TARGET_WORKTREE_DIR"
         fi
         exit 1
     fi
 
-    info "Both worktrees updated successfully with latest remote changes"
+    info "Both worktrees created successfully"
 
     # Get the current HEAD commits from both worktrees to ensure we're using the updated states
     local RELEASE_HEAD
     local TARGET_HEAD
     RELEASE_HEAD=$(git -C "$RELEASE_WORKTREE_DIR" rev-parse HEAD)
-    TARGET_HEAD=$(git -C "$TARGET_WORKTREE_DIR" rev-parse HEAD)
+    TARGET_HEAD=$(git -C "$MERGE_WORKTREE_DIR" rev-parse HEAD)
 
     # Get commits that exist in release branch but not in target branch
     # Use the release worktree for commit analysis to ensure we're using the updated state
@@ -780,23 +834,23 @@ function _mergeReleaseToMain() {
         # Check if there were commits in the range but all were filtered out
         if [[ -n "$ALL_COMMITS_IN_RANGE" ]]; then
             warning "All commits in the range start with 'release:' prefix and have been filtered out."
-            info "No commits to cherry-pick from $RELEASE_BRANCH to $TARGET_BRANCH"
+            info "No commits to cherry-pick from $RELEASE_BRANCH to $MERGE_BRANCH"
         else
             info "No commits found in the range between $TARGET_BRANCH and $RELEASE_BRANCH"
             info "The branches may already be in sync, or $RELEASE_BRANCH may be behind $TARGET_BRANCH"
         fi
-        # Clean up worktrees - always clean up both worktrees
+        # Clean up worktrees
         if ! _git worktree remove "$RELEASE_WORKTREE_DIR" --force; then
             warning "Could not remove release worktree automatically: $RELEASE_WORKTREE_DIR"
         fi
-        if ! _git worktree remove "$TARGET_WORKTREE_DIR" --force; then
-            warning "Could not remove target worktree automatically: $TARGET_WORKTREE_DIR"
+        if ! _git worktree remove "$MERGE_WORKTREE_DIR" --force; then
+            warning "Could not remove merge worktree automatically: $MERGE_WORKTREE_DIR"
         fi
         return 0
     fi
 
     # Display commits that will be cherry-picked (only if we have commits)
-    info "Found commits to cherry-pick:"
+    info "Found commits to cherry-pick into merge branch $MERGE_BRANCH:"
     echo "$COMMITS_TO_CHERRY_PICK" | while read -r commit_hash; do
         if [[ -n "$commit_hash" ]]; then
             commit_msg=$(git -C "$RELEASE_WORKTREE_DIR" log -1 --pretty=format:"%s" "$commit_hash")
@@ -806,19 +860,19 @@ function _mergeReleaseToMain() {
     newline
 
     # Confirm before proceeding (only if we have commits)
-    if [[ $(confirm "Proceed with cherry-picking these commits?") != "y" ]]; then
+    if [[ $(confirm "Proceed with cherry-picking these commits into $MERGE_BRANCH?") != "y" ]]; then
         info "Cherry-pick operation cancelled"
-        # Clean up worktrees - always clean up both worktrees
+        # Clean up worktrees
         if ! _git worktree remove "$RELEASE_WORKTREE_DIR" --force; then
             warning "Could not remove release worktree automatically: $RELEASE_WORKTREE_DIR"
         fi
-        if ! _git worktree remove "$TARGET_WORKTREE_DIR" --force; then
-            warning "Could not remove target worktree automatically: $TARGET_WORKTREE_DIR"
+        if ! _git worktree remove "$MERGE_WORKTREE_DIR" --force; then
+            warning "Could not remove merge worktree automatically: $MERGE_WORKTREE_DIR"
         fi
         return 0
     fi
 
-    # Cherry-pick each commit in the target worktree
+    # Cherry-pick each commit in the merge worktree
     local COMMIT_ARRAY
     mapfile -t COMMIT_ARRAY < <(echo "$COMMITS_TO_CHERRY_PICK")
 
@@ -827,9 +881,9 @@ function _mergeReleaseToMain() {
             COMMIT_MESSAGE=$(git -C "$RELEASE_WORKTREE_DIR" log -1 --pretty=format:"%s" "$commit_hash")
             info "Cherry-picking: $commit_hash - $COMMIT_MESSAGE"
 
-            # Always use separate worktree for cherry-pick operation
+            # Cherry-pick into merge worktree
             local CHERRY_PICK_SUCCESS=false
-            if git -C "$TARGET_WORKTREE_DIR" cherry-pick "$commit_hash"; then
+            if git -C "$MERGE_WORKTREE_DIR" cherry-pick "$commit_hash"; then
                 CHERRY_PICK_SUCCESS=true
             fi
 
@@ -851,26 +905,26 @@ function _mergeReleaseToMain() {
                 CHOICE=$(choose "Conflict resolution" CONFLICT_OPTIONS CONFLICT_ORDER)
 
                 if [[ "$CHOICE" == "abort" ]]; then
-                    git -C "$TARGET_WORKTREE_DIR" cherry-pick --abort
+                    git -C "$MERGE_WORKTREE_DIR" cherry-pick --abort
                     critical "Cherry-pick operation aborted"
-                    # Clean up worktrees - always clean up both worktrees
+                    # Clean up worktrees
                     if ! _git worktree remove "$RELEASE_WORKTREE_DIR" --force; then
                         warning "Could not remove release worktree automatically: $RELEASE_WORKTREE_DIR"
                     fi
-                    if ! _git worktree remove "$TARGET_WORKTREE_DIR" --force; then
-                        warning "Could not remove target worktree automatically: $TARGET_WORKTREE_DIR"
+                    if ! _git worktree remove "$MERGE_WORKTREE_DIR" --force; then
+                        warning "Could not remove merge worktree automatically: $MERGE_WORKTREE_DIR"
                     fi
                     exit 1
                 elif [[ "$CHOICE" == "mergetool" ]]; then
                     # Loop until conflicts are resolved or user aborts
                     while true; do
-                        info "Starting merge tool in target worktree..."
-                        git -C "$TARGET_WORKTREE_DIR" mergetool
+                        info "Starting merge tool in merge worktree..."
+                        git -C "$MERGE_WORKTREE_DIR" mergetool
 
                         # Check if conflicts are resolved by checking git status
                         # Look for unmerged paths (UU, AA, DD) and also check for any remaining conflicted files
                         local CONFLICT_STATUS
-                        CONFLICT_STATUS=$(git -C "$TARGET_WORKTREE_DIR" status --porcelain)
+                        CONFLICT_STATUS=$(git -C "$MERGE_WORKTREE_DIR" status --porcelain)
 
                         if echo "$CONFLICT_STATUS" | grep -q "^UU\|^AA\|^DD"; then
                             warning "Merge conflicts still exist. Choose an option:"
@@ -900,14 +954,14 @@ function _mergeReleaseToMain() {
                             RETRY_CHOICE=$(choose "Conflict resolution" RETRY_OPTIONS RETRY_ORDER)
 
                             if [[ "$RETRY_CHOICE" == "abort" ]]; then
-                                git -C "$TARGET_WORKTREE_DIR" cherry-pick --abort
+                                git -C "$MERGE_WORKTREE_DIR" cherry-pick --abort
                                 critical "Cherry-pick operation aborted"
-                                # Clean up worktrees - always clean up both worktrees
+                                # Clean up worktrees
                                 if ! _git worktree remove "$RELEASE_WORKTREE_DIR" --force; then
                                     warning "Could not remove release worktree automatically: $RELEASE_WORKTREE_DIR"
                                 fi
-                                if ! _git worktree remove "$TARGET_WORKTREE_DIR" --force; then
-                                    warning "Could not remove target worktree automatically: $TARGET_WORKTREE_DIR"
+                                if ! _git worktree remove "$MERGE_WORKTREE_DIR" --force; then
+                                    warning "Could not remove merge worktree automatically: $MERGE_WORKTREE_DIR"
                                 fi
                                 exit 1
                             fi
@@ -916,87 +970,118 @@ function _mergeReleaseToMain() {
                             # All conflicts resolved, stage the resolved files
                             info "All conflicts resolved. Staging resolved files..."
                             local STAGING_SUCCESS=false
-                            if git -C "$TARGET_WORKTREE_DIR" add .; then
+                            if git -C "$MERGE_WORKTREE_DIR" add .; then
                                 STAGING_SUCCESS=true
                             fi
 
                             if [[ "$STAGING_SUCCESS" != "true" ]]; then
                                 critical "Failed to stage resolved files"
-                                # Clean up worktrees - always clean up both worktrees
+                                # Clean up worktrees
                                 if ! _git worktree remove "$RELEASE_WORKTREE_DIR" --force; then
                                     warning "Could not remove release worktree automatically: $RELEASE_WORKTREE_DIR"
                                 fi
-                                if ! _git worktree remove "$TARGET_WORKTREE_DIR" --force; then
-                                    warning "Could not remove target worktree automatically: $TARGET_WORKTREE_DIR"
+                                if ! _git worktree remove "$MERGE_WORKTREE_DIR" --force; then
+                                    warning "Could not remove merge worktree automatically: $MERGE_WORKTREE_DIR"
                                 fi
                                 exit 1
                             fi
 
                             info "Continuing cherry-pick..."
                             local CONTINUE_SUCCESS=false
-                            if git -C "$TARGET_WORKTREE_DIR" cherry-pick --continue; then
+                            if git -C "$MERGE_WORKTREE_DIR" cherry-pick --continue; then
                                 CONTINUE_SUCCESS=true
                             fi
 
                             if [[ "$CONTINUE_SUCCESS" != "true" ]]; then
-                                critical "Failed to continue cherry-pick. Please resolve manually in $TARGET_WORKTREE_DIR"
-                                # Clean up worktrees - always clean up both worktrees
+                                critical "Failed to continue cherry-pick. Please resolve manually in $MERGE_WORKTREE_DIR"
+                                # Clean up worktrees
                                 if ! _git worktree remove "$RELEASE_WORKTREE_DIR" --force; then
                                     warning "Could not remove release worktree automatically: $RELEASE_WORKTREE_DIR"
                                 fi
-                                if ! _git worktree remove "$TARGET_WORKTREE_DIR" --force; then
-                                    warning "Could not remove target worktree automatically: $TARGET_WORKTREE_DIR"
+                                if ! _git worktree remove "$MERGE_WORKTREE_DIR" --force; then
+                                    warning "Could not remove merge worktree automatically: $MERGE_WORKTREE_DIR"
                                 fi
                                 exit 1
                             fi
 
-                            # Push the resolved cherry-picked commit immediately
-                            info "Pushing resolved cherry-picked commit to remote..."
-                            local PUSH_SUCCESS=false
-                            if git -C "$TARGET_WORKTREE_DIR" push origin "$TARGET_BRANCH"; then
-                                PUSH_SUCCESS=true
-                            fi
-
-                            if [[ "$PUSH_SUCCESS" == "true" ]]; then
-                                info "Successfully pushed resolved commit $commit_hash to remote $TARGET_BRANCH"
-                            else
-                                warning "Failed to push resolved commit $commit_hash. Continuing with next commit..."
-                            fi
+                            info "Successfully resolved and continued cherry-pick for commit $commit_hash"
                             break
                         fi
                     done
                 fi
             else
                 info "Successfully cherry-picked: $commit_hash"
-
-                # Push the cherry-picked commit immediately
-                info "Pushing cherry-picked commit to remote..."
-                local PUSH_SUCCESS=false
-                if git -C "$TARGET_WORKTREE_DIR" push origin "$TARGET_BRANCH"; then
-                    PUSH_SUCCESS=true
-                fi
-
-                if [[ "$PUSH_SUCCESS" == "true" ]]; then
-                    info "Successfully pushed commit $commit_hash to remote $TARGET_BRANCH"
-                else
-                    warning "Failed to push commit $commit_hash. Continuing with next commit..."
-                fi
             fi
         fi
     done
 
     info "Cherry-pick operation completed successfully"
-    info "All commits from $RELEASE_BRANCH have been merged and pushed to $TARGET_BRANCH"
+    info "All commits from $RELEASE_BRANCH have been cherry-picked to $MERGE_BRANCH"
     newline
 
-    # Clean up worktrees - always clean up both worktrees
-    if ! _git worktree remove "$RELEASE_WORKTREE_DIR" --force; then
-        warning "Could not remove release worktree automatically: $RELEASE_WORKTREE_DIR"
+    # Push the merge branch to remote
+    info "Pushing merge branch $MERGE_BRANCH to remote repository..."
+    if git -C "$MERGE_WORKTREE_DIR" push -u origin "$MERGE_BRANCH"; then
+        info "Successfully pushed merge branch $MERGE_BRANCH to remote repository"
+        newline
+
+        info "=== Merge Request Information ==="
+        info "Merge branch '$MERGE_BRANCH' has been created and pushed to remote repository"
+        newline
+        info "Source branch: $MERGE_BRANCH"
+        info "Target branch: $TARGET_BRANCH"
+        newline
+        info "Next steps:"
+        text "1. Go to your Git hosting service web interface"
+        text "2. Create a merge/pull request from '$MERGE_BRANCH' to '$TARGET_BRANCH'"
+        text "3. Review the changes and merge when ready"
+        newline
+        info "The merge branch contains all cherry-picked commits from $RELEASE_BRANCH"
+        newline
+
+        # Clean up worktrees after successful push
+        info "Cleaning up local worktrees and branches..."
+        if ! _git worktree remove "$MERGE_WORKTREE_DIR" --force; then
+            warning "Could not remove merge worktree automatically: $MERGE_WORKTREE_DIR"
+        fi
+
+        # Delete the local merge branch after successful push
+        if _git branch -D "$MERGE_BRANCH" >/dev/null 2>&1; then
+            info "✓ Removed local merge branch: $MERGE_BRANCH"
+        else
+            warning "Could not remove local merge branch: $MERGE_BRANCH"
+        fi
+
+        if ! _git worktree remove "$RELEASE_WORKTREE_DIR" --force; then
+            warning "Could not remove release worktree automatically: $RELEASE_WORKTREE_DIR"
+        fi
+
+        info "✓ Local cleanup completed successfully"
+        info "The merge branch exists only on the remote repository for the merge request"
+    else
+        critical "Failed to push merge branch $MERGE_BRANCH to remote repository"
+        critical "The merge branch was created locally but could not be pushed"
+        critical "Please check your network connection and repository access rights"
+        newline
+        critical "The local merge branch has been preserved for manual investigation:"
+        text "  - Merge branch: $MERGE_BRANCH"
+        text "  - Worktree location: $MERGE_WORKTREE_DIR"
+        newline
+        critical "You can:"
+        text "  1. Investigate the issue and retry: git push -u origin $MERGE_BRANCH"
+        text "  2. Or clean up manually if no longer needed:"
+        text "     - Remove worktree: git worktree remove $MERGE_WORKTREE_DIR --force"
+        text "     - Delete branch: git branch -D $MERGE_BRANCH"
+        newline
+
+        # Clean up only the release worktree on push failure, keep merge branch for investigation
+        if ! _git worktree remove "$RELEASE_WORKTREE_DIR" --force; then
+            warning "Could not remove release worktree automatically: $RELEASE_WORKTREE_DIR"
+        fi
+
+        # Exit with error code to indicate failure
+        exit 1
     fi
-    if ! _git worktree remove "$TARGET_WORKTREE_DIR" --force; then
-        warning "Could not remove target worktree automatically: $TARGET_WORKTREE_DIR"
-    fi
-    info "Worktrees cleaned up successfully"
 }
 
 function _update() {
