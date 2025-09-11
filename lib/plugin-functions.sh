@@ -432,32 +432,34 @@ function _help() {
 }
 
 function _showProjectStatus() {
+    local PAD=" "  # Changed from "    " to "  " to match printHelp's 2-space padding
     sub_headline "Project Status"
 
     # Project Directory Information
-    text "Project Directory: {{ Foreground \"14\" \"$PROJECT_DIR\" }}"
+    text "${PAD}Project Directory: {{ Foreground \"14\" \"$PROJECT_DIR\" }}"
 
     # Check if project is managed by docker control plugin
     if [[ -f "$PROJECT_DIR/.managed-by-docker-control-plugin" ]]; then
-        text "Plugin Management: {{ Foreground \"10\" \"✓ Managed by Docker Control Plugin\" }}"
+        text "${PAD}Plugin Management: {{ Foreground \"10\" \"✓ Managed by Docker Control Plugin\" }}"
     else
-        text "Plugin Management: {{ Foreground \"11\" \"✗ Not managed by Docker Control Plugin\" }}"
-        text "  Run {{ Foreground \"14\" \"docker control init\" }} to initialize this directory"
+        text "${PAD}Plugin Management: {{ Foreground \"11\" \"✗ Not managed by Docker Control Plugin\" }}"
+        text "${PAD}  Run {{ Foreground \"14\" \"docker control init\" }} to initialize this directory"
     fi
 
     # Git Repository Status
-    _showGitStatus
+    _showGitStatus "$PAD"
 
     # Deployment Configuration Status
-    _showDeploymentStatus
+    _showDeploymentStatus "$PAD"
 
     # Docker Status
-    _showDockerStatus
+    _showDockerStatus "$PAD"
 
     newline
 }
 
 function _showGitStatus() {
+    local PAD="$1"
     local GIT_STATUS=""
     local CURRENT_BRANCH=""
     local GIT_REMOTE=""
@@ -483,19 +485,20 @@ function _showGitStatus() {
         else
             GIT_STATUS="{{ Foreground \"11\" \"unknown state\" }}"
         fi
-        text "Git Repository: {{ Foreground \"10\" \"✓ Initialized\" }} ($GIT_STATUS)"
+        text "${PAD}Git Repository: {{ Foreground \"10\" \"✓ Initialized\" }} ($GIT_STATUS)"
     else
-        text "Git Repository: {{ Foreground \"11\" \"✗ Not a git repository\" }}"
-        text "  Initialize with {{ Foreground \"14\" \"git init\" }} in the htdocs directory"
+        text "${PAD}Git Repository: {{ Foreground \"11\" \"✗ Not a git repository\" }}"
+        text "${PAD}  Initialize with {{ Foreground \"14\" \"git init\" }} in the htdocs directory"
     fi
 }
 
 function _showDeploymentStatus() {
+    local PAD="$1"
     local CONFIG_FILE
     CONFIG_FILE=$(getJsonConfigFile "$PROJECT_DIR" 2>/dev/null)
 
     if [[ -n "$CONFIG_FILE" ]]; then
-        text "Deployment Config: {{ Foreground \"10\" \"✓ Configured (JSON)\" }}"
+        text "${PAD}Deployment Config: {{ Foreground \"10\" \"✓ Configured (JSON)\" }}"
 
         # Load deployment configuration to show environments
         local DEPLOY_ENVS_LOCAL=()
@@ -508,34 +511,35 @@ function _showDeploymentStatus() {
 
         if [[ "$CONFIG_VALID" == "true" ]]; then
             if [[ ${#DEPLOY_ENVS_LOCAL[@]} -gt 0 ]]; then
-                text "  Environments: {{ Foreground \"14\" \"${DEPLOY_ENVS_LOCAL[*]}\" }}"
-                text "  Configuration file: {{ Foreground \"14\" \"$(basename "$CONFIG_FILE")\" }}"
+                text "${PAD}  Environments: {{ Foreground \"14\" \"${DEPLOY_ENVS_LOCAL[*]}\" }}"
+                text "${PAD}  Configuration file: {{ Foreground \"14\" \"$(basename "$CONFIG_FILE")\" }}"
             else
-                text "  {{ Foreground \"11\" \"No environments configured\" }}"
+                text "${PAD}  {{ Foreground \"11\" \"No environments configured\" }}"
             fi
         else
-            text "  {{ Foreground \"11\" \"Configuration file exists but is malformed\" }}"
+            text "${PAD}  {{ Foreground \"11\" \"Configuration file exists but is malformed\" }}"
         fi
     else
-        text "Deployment Config: {{ Foreground \"11\" \"✗ Not configured\" }}"
-        text "  Run {{ Foreground \"14\" \"docker control add-deploy-config\" }} to add deployment environments"
+        text "${PAD}Deployment Config: {{ Foreground \"11\" \"✗ Not configured\" }}"
+        text "${PAD}  Run {{ Foreground \"14\" \"docker control add-deploy-config\" }} to add deployment environments"
     fi
 }
 
 function _showDockerStatus() {
+    local PAD="$1"
     local CONTAINER_COUNT=0
     local RUNNING_COUNT=0
     local PROJECT_CONTAINERS=""
 
     # Check if Docker is available
     if ! command -v docker &> /dev/null; then
-        text "Docker Status: {{ Foreground \"11\" \"✗ Docker not available\" }}"
+        text "${PAD}Docker Status: {{ Foreground \"11\" \"✗ Docker not available\" }}"
         return
     fi
 
     # Check if Docker daemon is running
     if ! docker info &> /dev/null; then
-        text "Docker Status: {{ Foreground \"11\" \"✗ Docker daemon not running\" }}"
+        text "${PAD}Docker Status: {{ Foreground \"11\" \"✗ Docker daemon not running\" }}"
         return
     fi
 
@@ -546,17 +550,17 @@ function _showDockerStatus() {
             RUNNING_COUNT=$(echo "$PROJECT_CONTAINERS" | grep -c "Up" || true)
 
             if [[ $RUNNING_COUNT -gt 0 ]]; then
-                text "Docker Status: {{ Foreground \"10\" \"✓ $RUNNING_COUNT/$CONTAINER_COUNT containers running\" }}"
+                text "${PAD}Docker Status: {{ Foreground \"10\" \"✓ $RUNNING_COUNT/$CONTAINER_COUNT containers running\" }}"
             else
-                text "Docker Status: {{ Foreground \"11\" \"○ $CONTAINER_COUNT containers stopped\" }}"
-                text "  Run {{ Foreground \"14\" \"docker control start\" }} to start containers"
+                text "${PAD}Docker Status: {{ Foreground \"11\" \"○ $CONTAINER_COUNT containers stopped\" }}"
+                text "${PAD}  Run {{ Foreground \"14\" \"docker control start\" }} to start containers"
             fi
         else
-            text "Docker Status: {{ Foreground \"11\" \"○ No project containers found\" }}"
-            text "  Run {{ Foreground \"14\" \"docker control start\" }} to create and start containers"
+            text "${PAD}Docker Status: {{ Foreground \"11\" \"○ No project containers found\" }}"
+            text "${PAD}  Run {{ Foreground \"14\" \"docker control start\" }} to create and start containers"
         fi
     else
-        text "Docker Status: {{ Foreground \"11\" \"✗ Unable to query container status\" }}"
+        text "${PAD}Docker Status: {{ Foreground \"11\" \"✗ Unable to query container status\" }}"
     fi
 }
 

@@ -266,8 +266,6 @@ function text() {
                 ;;
         esac
     done
-    MESSAGE=$(echo -e "${MESSAGE}" | sed -e 's/^[[:space:]]*//') # trim spaces
-
     "$GUM_EXECUTABLE" format -t template "$MESSAGE"
     newline
 }
