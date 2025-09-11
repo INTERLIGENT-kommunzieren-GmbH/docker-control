@@ -176,11 +176,28 @@ if ! nc -zv "$BIND_IP" 2222 > /dev/null 2>&1; then
     fi
     sleep 1
 
-    containers=$(docker ps -q --filter "label=com.interligent.dockerplugin.service=php")
-    if [ -n "$containers" ]; then
-        echo "restarting php containers to connect to new ssh agent port"
-        # shellcheck disable=SC2086
-        docker restart $containers
+    # Find PHP containers and extract their project directories for complete project restart
+    php_containers=$(docker ps -q --filter "label=com.interligent.dockerplugin.service=php")
+    if [ -n "$php_containers" ]; then
+        echo "restarting projects with PHP containers to connect to new ssh agent port"
+
+        # Extract unique project directories from PHP containers
+        project_dirs=$(docker inspect --format='{{index .Config.Labels "com.interligent.dockerplugin.dir"}}' $php_containers | sort -u)
+
+        for project_dir in $project_dirs; do
+            if [ -n "$project_dir" ] && [ -d "$project_dir" ]; then
+                # Use docker compose down/up to completely recreate containers
+                # Suppress verbose output, only show errors
+                if docker compose --project-directory "$project_dir" down --quiet >/dev/null 2>&1 && \
+                   docker compose --project-directory "$project_dir" up -d --quiet >/dev/null 2>&1; then
+                    echo "✓ $(basename "$project_dir")"
+                else
+                    echo "✗ Failed to recreate project: $(basename "$project_dir")"
+                fi
+            elif [ -n "$project_dir" ]; then
+                echo "✗ Directory not found: $(basename "$project_dir")"
+            fi
+        done
     fi
 fi
 
