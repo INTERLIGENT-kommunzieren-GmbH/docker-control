@@ -51,6 +51,118 @@ function _pushWithErrorHandling() {
     fi
 }
 
+function synchronizeWithRemote() {
+    local PRIMARY_BRANCH
+    PRIMARY_BRANCH=$(getPrimaryBranch)
+
+    info "=== Synchronizing with Remote Repository ==="
+
+    # Step 1: Fetch all remote updates
+    info "Fetching all remote updates..."
+    if ! _git fetch --all; then
+        critical "Failed to fetch remote updates"
+        critical "Please check your network connection and repository access rights"
+        exit 1
+    fi
+    info "✓ Successfully fetched all remote updates"
+
+    # Step 2: Synchronize the primary branch
+    info "Synchronizing primary branch ($PRIMARY_BRANCH)..."
+
+    # Check if primary branch exists locally
+    if ! _git rev-parse --verify "$PRIMARY_BRANCH" >/dev/null 2>&1; then
+        if _git rev-parse --verify "origin/$PRIMARY_BRANCH" >/dev/null 2>&1; then
+            info "Creating local tracking branch for $PRIMARY_BRANCH"
+            if ! _git branch "$PRIMARY_BRANCH" "origin/$PRIMARY_BRANCH"; then
+                critical "Failed to create local tracking branch for $PRIMARY_BRANCH"
+                exit 1
+            fi
+        else
+            critical "Primary branch $PRIMARY_BRANCH not found locally or on remote"
+            exit 1
+        fi
+    fi
+
+    # Switch to primary branch and pull latest changes
+    if ! _git checkout "$PRIMARY_BRANCH"; then
+        critical "Failed to checkout $PRIMARY_BRANCH branch"
+        exit 1
+    fi
+
+    if ! _git pull origin "$PRIMARY_BRANCH"; then
+        critical "Failed to pull latest changes for $PRIMARY_BRANCH"
+        critical "There may be merge conflicts that need manual resolution"
+        exit 1
+    fi
+    info "✓ Successfully synchronized primary branch ($PRIMARY_BRANCH)"
+
+    # Step 3: Update existing release branches
+    info "Updating existing release branches..."
+    local RELEASE_BRANCHES=()
+    # Get both local and remote release branches, stripping origin/ prefix from remote branches
+    mapfile -t RELEASE_BRANCHES < <(_git branch -a --format='%(refname:short)' | sed 's|^origin/||' | grep -E '^[0-9]+\.[0-9]+\.x$' | sort -u)
+
+    if [[ ${#RELEASE_BRANCHES[@]} -gt 0 ]]; then
+        for branch in "${RELEASE_BRANCHES[@]}"; do
+            # Check if branch exists on remote
+            if _git rev-parse --verify "origin/$branch" >/dev/null 2>&1; then
+                info "Updating release branch: $branch"
+
+                # Check if branch exists locally
+                if ! _git rev-parse --verify "$branch" >/dev/null 2>&1; then
+                    info "Creating local tracking branch for $branch"
+                    if ! _git branch "$branch" "origin/$branch"; then
+                        warning "Failed to create local tracking branch for $branch"
+                        continue
+                    fi
+                fi
+
+                # Switch to branch and pull latest changes
+                if _git checkout "$branch"; then
+                    if _git pull origin "$branch"; then
+                        info "✓ Successfully updated release branch: $branch"
+                    else
+                        warning "Failed to pull latest changes for release branch: $branch"
+                        warning "There may be merge conflicts that need manual resolution"
+                    fi
+                else
+                    warning "Failed to checkout release branch: $branch"
+                fi
+            else
+                info "Release branch $branch exists locally but not on remote (skipping)"
+            fi
+        done
+
+        # Return to primary branch
+        if ! _git checkout "$PRIMARY_BRANCH"; then
+            warning "Failed to return to primary branch $PRIMARY_BRANCH"
+        fi
+    else
+        info "No existing release branches found to update"
+    fi
+
+    # Step 4: Verify synchronization status
+    info "Verifying synchronization status..."
+    if ! _git status --porcelain | grep -q .; then
+        info "✓ Working directory is clean"
+    else
+        warning "Working directory has uncommitted changes"
+        _git status --short
+    fi
+
+    # Verify we're on the primary branch
+    local CURRENT_BRANCH
+    CURRENT_BRANCH=$(_git branch --show-current)
+    if [[ "$CURRENT_BRANCH" == "$PRIMARY_BRANCH" ]]; then
+        info "✓ Currently on primary branch ($PRIMARY_BRANCH)"
+    else
+        warning "Currently on branch: $CURRENT_BRANCH (expected: $PRIMARY_BRANCH)"
+    fi
+
+    info "=== Remote Synchronization Complete ==="
+    newline
+}
+
 function getLatestReleaseBranches() {
     local BRANCHES=()
     local LATEST_BRANCHES=()
@@ -108,7 +220,7 @@ function getLatestTags() {
     if [[ "$INCL_BRANCHES" != "n" ]]; then
         # Add branch names like '*.*.x' to TAGS array
         local BRANCHES=()
-        mapfile -t BRANCHES < <(_git branch -a --format='%(refname:short)' | grep -E '^[0-9]+\.[0-9]+\.x$')
+        mapfile -t BRANCHES < <(_git branch -a --format='%(refname:short)' | sed 's|^origin/||' | grep -E '^[0-9]+\.[0-9]+\.x$' | sort -u)
         TAGS+=( "${BRANCHES[@]}" )
         mapfile -t TAGS < <(printf "%s\n" "${TAGS[@]}" | sort -u)
     fi
@@ -192,7 +304,7 @@ function getHighestReleaseBranch() {
     _git fetch origin >/dev/null 2>&1
 
     # Get both local and remote release branches (format: X.Y.x)
-    mapfile -t BRANCHES < <(_git branch -a --format='%(refname:short)' | grep -E '^[0-9]+\.[0-9]+\.x$' | sort -u)
+    mapfile -t BRANCHES < <(_git branch -a --format='%(refname:short)' | sed 's|^origin/||' | grep -E '^[0-9]+\.[0-9]+\.x$' | sort -u)
 
     if [[ ${#BRANCHES[@]} -eq 0 ]]; then
         echo ""
@@ -269,7 +381,7 @@ function selectPatchReleaseBranch() {
     _git fetch origin >/dev/null 2>&1
 
     # Get both local and remote release branches (format: X.Y.x)
-    mapfile -t BRANCHES < <(_git branch -a --format='%(refname:short)' | grep -E '^[0-9]+\.[0-9]+\.x$' | sort -V -r)
+    mapfile -t BRANCHES < <(_git branch -a --format='%(refname:short)' | sed 's|^origin/||' | grep -E '^[0-9]+\.[0-9]+\.x$' | sort -u | sort -V -r)
 
     if [[ ${#BRANCHES[@]} -eq 0 ]]; then
         critical "No existing release branches found for patch release"
@@ -310,22 +422,8 @@ function gitCreateRelease() {
     # Validate primary branch exists
     validateBranchExists "$PRIMARY_BRANCH"
 
-    # Ensure primary branch is up-to-date
-    info "Ensuring $PRIMARY_BRANCH branch is up-to-date..."
-    if ! _git fetch origin "$PRIMARY_BRANCH"; then
-        critical "Failed to fetch latest changes from remote"
-        exit 1
-    fi
-
-    if ! _git checkout "$PRIMARY_BRANCH"; then
-        critical "Failed to checkout $PRIMARY_BRANCH branch"
-        exit 1
-    fi
-
-    if ! _git reset --hard "origin/$PRIMARY_BRANCH"; then
-        critical "Failed to sync with remote $PRIMARY_BRANCH branch"
-        exit 1
-    fi
+    # Synchronize with remote repository (comprehensive sync)
+    synchronizeWithRemote
 
     info "Pre-flight checks completed successfully"
     echo
@@ -333,7 +431,15 @@ function gitCreateRelease() {
     # Step 1: Check for existing release branches
     info "=== Checking for existing release branches ==="
     local EXISTING_BRANCHES=()
-    mapfile -t EXISTING_BRANCHES < <(_git branch -a --format='%(refname:short)' | grep -E '^[0-9]+\.[0-9]+\.x$' | sort -u)
+    # Get both local and remote release branches, stripping origin/ prefix from remote branches
+    mapfile -t EXISTING_BRANCHES < <(_git branch -a --format='%(refname:short)' | sed 's|^origin/||' | grep -E '^[0-9]+\.[0-9]+\.x$' | sort -u)
+
+    # Debug: Show what branches were found
+    if [[ ${#EXISTING_BRANCHES[@]} -gt 0 ]]; then
+        info "Found existing release branches: ${EXISTING_BRANCHES[*]}"
+    else
+        info "No existing release branches found"
+    fi
 
     if [[ ${#EXISTING_BRANCHES[@]} -eq 0 ]]; then
         # No existing release branches - create initial release automatically
@@ -361,7 +467,6 @@ function gitCreateRelease() {
     fi
 
     # Existing release branches found - proceed with normal classification
-    info "Found existing release branches: ${EXISTING_BRANCHES[*]}"
     echo
 
     # Step 2: Release Type Classification
@@ -713,7 +818,7 @@ function generateChangelogEntry() {
         CURRENT_BRANCH_NAME=$(git -C "$WORKTREE_DIR" branch --show-current)
 
         # Use the main repository context to get accurate branch information
-        mapfile -t EXISTING_BRANCHES < <(_git branch -a --format='%(refname:short)' | grep -E '^[0-9]+\.[0-9]+\.x$' | grep -v "^$CURRENT_BRANCH_NAME$" | sort -V -r)
+        mapfile -t EXISTING_BRANCHES < <(_git branch -a --format='%(refname:short)' | sed 's|^origin/||' | grep -E '^[0-9]+\.[0-9]+\.x$' | sort -u | grep -v "^$CURRENT_BRANCH_NAME$" | sort -V -r)
 
         if [[ ${#EXISTING_BRANCHES[@]} -gt 0 ]]; then
             # Use the highest existing release branch to determine commit range
@@ -1009,7 +1114,7 @@ function generateAndEditChangelogForReleaseBranch() {
     # Get the highest existing release branch to determine commit range
     # Note: We need to exclude the current release being created
     local EXISTING_BRANCHES=()
-    mapfile -t EXISTING_BRANCHES < <(_git branch -a --format='%(refname:short)' | grep -E '^[0-9]+\.[0-9]+\.x$' | grep -v "^$RELEASE$" | sort -V -r)
+    mapfile -t EXISTING_BRANCHES < <(_git branch -a --format='%(refname:short)' | sed 's|^origin/||' | grep -E '^[0-9]+\.[0-9]+\.x$' | sort -u | grep -v "^$RELEASE$" | sort -V -r)
 
     local COMMIT_RANGE=""
     local CHANGELOG_CONTENT=""

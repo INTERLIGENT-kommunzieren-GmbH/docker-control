@@ -223,6 +223,10 @@ function _deploy() {
     fi
     newline
 
+    # Synchronize with remote repository to ensure latest releases are available
+    info "Synchronizing with remote repository to fetch latest releases..."
+    synchronizeWithRemote
+
     # Select release/tag for deployment
     info "Selecting release for deployment..."
     RELEASE=$(select_release_tag)
@@ -647,6 +651,9 @@ function _mergeReleaseToMain() {
         critical "Please ensure the Git repository exists and is accessible"
         exit 1
     fi
+
+    # Synchronize with remote repository before any branch operations
+    synchronizeWithRemote
 
     # Get the release branch using existing function
     RELEASE_BRANCH=$(getLatestReleaseBranch)

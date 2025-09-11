@@ -27,6 +27,10 @@ function createDeploymentZip() {
 
     mkdir "$PROJECT_DIR/deployments/$DEPLOYMENT"
 
+    # Fetch latest remote state to ensure we have the most current version of the branch/tag
+    info "Fetching latest remote state for deployment..."
+    git -C "$PROJECT_DIR"/htdocs fetch --all --tags
+
     # create worktree
     git -C "$PROJECT_DIR"/htdocs worktree add --detach "$PROJECT_DIR/deployments/$DEPLOYMENT" "$BRANCH"
 
