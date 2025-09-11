@@ -365,33 +365,34 @@ function dockerComposeIngress() {
 }
 
 function _help() {
-    local COMMANDS
     # shellcheck disable=SC2034
-    COMMANDS=(
-            $'add-deploy-config\tAdd deployment configuration for environments'
-            $'build [options]\tBuild Docker containers (accepts docker-compose build options)'
-            $'console [container]\tEnter container console (defaults to php)'
-            $'create-control-script <name>\tCreate a custom control script'
-            $'deploy <env>\tDeploy selected release to specified environment'
-            $'help\tShow this help and project status'
-            $'init\tInitialize empty directory with project template'
-            $'install-plugin\tInstall Docker CLI plugin system-wide'
-            $'merge\tMerge release branch to main using cherry-pick'
-            $'pull\tPull latest Docker images for project containers'
-            $'pull-ingress\tPull latest ingress-related Docker images'
-            $'release\tCreate new release branch with automated versioning'
-            $'restart\tRestart project containers (stop and start)'
-            $'restart-ingress\tRestart ingress containers (stop and start)'
-            $'show-running\tShow all running Docker projects'
-            $'start\tStart project containers'
-            $'start-ingress\tStart ingress containers'
-            $'status\tShow status of project containers'
-            $'status-ingress\tShow status of ingress containers'
-            $'stop\tStop project containers'
-            $'stop-ingress\tStop ingress containers'
-            $'update\tUpdate project with current template and restart'
-            $'update-plugin\tUpdate Docker plugin to latest version'
-            $'version\tShow version information'
+    local BASIC_COMMANDS=(
+        $'console [container]\tEnter container console (defaults to php)'
+        $'deploy <env>\tDeploy selected release to specified environment'
+        $'help\tShow this help and project status'
+        $'init\tInitialize empty directory with project template'
+        $'merge\tMerge release branch to main using cherry-pick'
+        $'release\tCreate new release branch with automated versioning'
+        $'restart\tRestart project containers (stop and start)'
+        $'start\tStart project containers'
+        $'stop\tStop project containers'
+        $'version\tShow version information'
+    )
+    # shellcheck disable=SC2034
+    local ADVANCED_COMMANDS=(
+        $'add-deploy-config\tAdd deployment configuration for environments'
+        $'create-control-script <name>\tCreate a custom control script'
+        $'install-plugin\tInstall Docker CLI plugin system-wide'
+        $'pull\tPull latest Docker images for project containers'
+        $'pull-ingress\tPull latest ingress-related Docker images'
+        $'restart-ingress\tRestart ingress containers (stop and start)'
+        $'show-running\tShow all running Docker projects'
+        $'start-ingress\tStart ingress containers'
+        $'status\tShow status of project containers'
+        $'status-ingress\tShow status of ingress containers'
+        $'stop-ingress\tStop ingress containers'
+        $'update\tUpdate project with current template and restart'
+        $'update-plugin\tUpdate Docker plugin to latest version'
     )
     local OPTIONS
     # shellcheck disable=SC2034
@@ -403,7 +404,8 @@ function _help() {
     newline
 
     printHelp "Options" OPTIONS
-    printHelp "Commands" COMMANDS
+    printHelp "Basic Usage" BASIC_COMMANDS
+    printHelp "Advanced Usage" ADVANCED_COMMANDS
 
     # Check for control scripts in .docker-control directory first, then fallback to legacy location
     local CONTROL_SCRIPTS_DIR=""
@@ -422,7 +424,7 @@ function _help() {
             SUB_COMMANDS+=( "$(basename "$COMMAND" .sh)${TAB}$(LIB_DIR="$LIB_DIR" "$COMMAND" _desc_)" )
         done
 
-        printHelp "Custom commands" SUB_COMMANDS
+        printHelp "Custom Commands" SUB_COMMANDS
     fi
 
     # Add project status information
@@ -1140,6 +1142,9 @@ EOF
         socat UNIX-LISTEN:/tmp/ssh-agent.sock,fork,mode=666 TCP:"$SSH_AUTH_PORT" >/dev/null &
         export SSH_AUTH_SOCK=/tmp/ssh-agent.sock
     fi
+
+    shopt -s checkwinsize
+    (: Refresh LINES and COLUMNS)
 }
 
 function parseArguments() {
@@ -1169,18 +1174,6 @@ function parseArguments() {
             add-deploy-config)
                 checkDir
                 _addDeployConfig
-                exit 0
-                ;;
-            build)
-                checkDir
-                shift
-                dockerCompose build "$@"
-                exit 0
-                ;;
-            create-control-script)
-                checkDir
-                shift
-                _createControlScript "$@"
                 exit 0
                 ;;
             console)

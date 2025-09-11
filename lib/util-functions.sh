@@ -103,8 +103,16 @@ function fatal() {
 function headline() {
     local MESSAGE
     MESSAGE=$(text "$1")
-
-    "$GUM_EXECUTABLE" style --foreground="0" --background="2" --border=double --border-background="2" --padding="1 2" --width=78 --align="center" "$MESSAGE"
+    local TERM_WIDTH
+    local PADDING=1
+    local BORDER_WIDTH=1 # double border left+right
+    local EFFECTIVE_WIDTH
+    TERM_WIDTH=${COLUMNS:-80}
+    EFFECTIVE_WIDTH=$((TERM_WIDTH - PADDING - BORDER_WIDTH))
+    if (( EFFECTIVE_WIDTH < 20 )); then
+        EFFECTIVE_WIDTH=20
+    fi
+    "$GUM_EXECUTABLE" style --foreground="0" --background="2" --border=double --border-background="2" --border-foreground="0" --padding="0 2" --width="$EFFECTIVE_WIDTH" --align="center" "$MESSAGE"
 
     return 0
 }
@@ -214,9 +222,10 @@ function select_file() {
 function sub_headline() {
     local MESSAGE
     MESSAGE=$(text "$1")
-
+    local TERM_WIDTH
+    TERM_WIDTH=${COLUMNS:-80}
     newline
-    "$GUM_EXECUTABLE" style --foreground="0" --background="5" --italic --width=80 --align="center" "$MESSAGE"
+    "$GUM_EXECUTABLE" style --foreground="0" --background="5" --italic --width="$TERM_WIDTH" --align="center" "$MESSAGE"
 }
 
 function text() {
@@ -270,5 +279,3 @@ function warning() {
     newline
     "$GUM_EXECUTABLE" style --foreground="11" "$MESSAGE"
 }
-
-
