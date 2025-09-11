@@ -163,6 +163,7 @@ function _deploy() {
     fi
 
     # Validate that configuration was loaded properly
+    # shellcheck disable=SC2128
     if [[ -z "$DEPLOY_ENVS" ]]; then
         critical "Deployment configuration is empty or malformed"
         critical "Please check $CONFIG_FILE"
@@ -227,6 +228,7 @@ function _deploy() {
     RELEASE=$(select_release_tag)
 
     # Check if release selection was successful
+    # shellcheck disable=SC2181
     if [[ $? -ne 0 ]] || [[ -z "$RELEASE" ]]; then
         critical "Failed to select release for deployment"
         exit 1
@@ -568,7 +570,7 @@ function _init() {
     info "Creating project template"
     cp -r "$TEMPLATE_DIR"/. "$PROJECT_DIR/"
     mv "$PROJECT_DIR/.gitignore-dist" "$PROJECT_DIR/.gitignore"
-    mkdir "$PROJECT_DIR/htdocs"
+    mkdir -p "$PROJECT_DIR/htdocs"
 
     local PROJECT_NAME
     PROJECT_NAME=$(input -n -l "Project name")
@@ -577,13 +579,14 @@ function _init() {
     local DB_HOST_PORT=""
 
     for i in {33060..33099}; do
-        DB_HOST_PORT=$i
-        DB_HOST_PORT_IN_USE=$(nc -zv host.docker.internal "$DB_HOST_PORT" 2>/dev/null && echo "yes" || echo "no")
+        DB_HOST_PORT_IN_USE=$(nc -zv host.docker.internal "$i" 2>/dev/null && echo "yes" || echo "no")
         if [ "$DB_HOST_PORT_IN_USE" == "no" ]; then
+            DB_HOST_PORT=$i
+            info "Automatically selected DB_HOST_PORT $DB_HOST_PORT as it seems to be free. Please verify it and adjust accordingly in .env file."
             break
         fi
-        info "Automatically selected DB_HOST_PORT $DB_HOST_PORT as it seems to be free. Please verify it and adjust accordingly in .env file."
     done
+
     if [ -z "$DB_HOST_PORT" ]; then
         critical "No empty port found between 33060 and 33099 for external database connection, please select one manually and update your .env file."
         newline
@@ -604,7 +607,7 @@ EOF
     if [ "$CHECKOUT_PROJECT" == "y" ]; then
         local PROJECT_GIT_URL
         PROJECT_GIT_URL=$(input -p "clone url (use ssh link)" -n)
-        git checkout "$PROJECT_GIT_URL" "$PROJECT_DIR/htdocs"
+        git clone "$PROJECT_GIT_URL" "$PROJECT_DIR/htdocs"
     fi
 }
 
@@ -647,6 +650,7 @@ function _mergeReleaseToMain() {
 
     # Get the release branch using existing function
     RELEASE_BRANCH=$(getLatestReleaseBranch)
+    # shellcheck disable=SC2181
     if [[ $? -ne 0 ]] || [[ -z "$RELEASE_BRANCH" ]]; then
         critical "Failed to select release branch"
         exit 1
@@ -656,6 +660,7 @@ function _mergeReleaseToMain() {
 
     # Get the target branch using existing function
     TARGET_BRANCH=$(getPrimaryBranch)
+    # shellcheck disable=SC2181
     if [[ $? -ne 0 ]] || [[ -z "$TARGET_BRANCH" ]]; then
         critical "Failed to determine target branch"
         exit 1
