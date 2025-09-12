@@ -60,6 +60,26 @@
                 "https://outlook.office.com/webhook/12345678-1234-1234-1234-123456789012@12345678-1234-1234-1234-123456789012/IncomingWebhook/abcdef1234567890abcdef1234567890/12345678-1234-1234-1234-123456789012",
                 "https://tenant.webhook.office.com/webhookb2/12345678-1234-1234-1234-123456789012@12345678-1234-1234-1234-123456789012/IncomingWebhook/abcdef1234567890abcdef1234567890/12345678-1234-1234-1234-123456789012"
               ]
+            },
+            "sharedDirectories": {
+              "type": "array",
+              "description": "Directories that need to be symlinked from shared storage during deployment",
+              "items": {
+                "type": "string",
+                "pattern": "^[^/].*[^/]$|^[^/]$",
+                "description": "Relative path from htdocs directory (no leading or trailing slashes)"
+              },
+              "examples": [["uploads", "cache", "logs", "storage/temp"]]
+            },
+            "sharedFiles": {
+              "type": "array",
+              "description": "Files that need to be symlinked from shared storage during deployment",
+              "items": {
+                "type": "string",
+                "pattern": "^[^/].*[^/]$|^[^/]$",
+                "description": "Relative path from htdocs directory (no leading or trailing slashes)"
+              },
+              "examples": [["config/database.json", "storage/app.log", ".env.local"]]
             }
           },
           "required": ["user", "domain"],
@@ -131,14 +151,18 @@
           "domain": "production.example.com",
           "serviceRoot": "/var/www/html",
           "description": "Production environment",
-          "tags": ["production", "critical"]
+          "tags": ["production", "critical"],
+          "sharedDirectories": ["uploads", "cache", "logs"],
+          "sharedFiles": ["config/database.json", "storage/app.log"]
         },
         "staging": {
           "user": "deploy",
           "domain": "staging.projects.interligent.com",
           "serviceRoot": "/var/www/html",
           "description": "Staging environment for testing",
-          "tags": ["staging", "testing"]
+          "tags": ["staging", "testing"],
+          "sharedDirectories": ["uploads", "cache"],
+          "sharedFiles": ["config/database.json"]
         }
       },
       "environmentOrder": ["production", "staging"],

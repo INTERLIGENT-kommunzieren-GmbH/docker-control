@@ -275,6 +275,9 @@ function deploy() {
     execSSH "$USER" "$DOMAIN" "rm $SERVER_ROOT/current"
     execSSH "$USER" "$DOMAIN" "ln -s releases/$DEPLOYMENT_DIRECTORY /var/www/html/current"
 
+    # Handle shared paths symlinking
+    handleSharedPaths "$ENV" "$USER" "$DOMAIN" "$SERVER_ROOT" "$DEPLOYMENT_DIRECTORY"
+
     # final bytecode cache clear
     execSSH "$USER" "$DOMAIN" "$CONSOLE_PATH_NEW_RELEASE shared:clear-opcc"
 
@@ -284,6 +287,145 @@ function deploy() {
 
     info "Deployment done"
 
+}
+
+function createSharedPaths() {
+    local USER="$1"
+    local DOMAIN="$2"
+    local SERVER_ROOT="$3"
+    local SHARED_DIRECTORIES="$4"
+    local SHARED_FILES="$5"
+
+    if [[ -z "$SHARED_DIRECTORIES" && -z "$SHARED_FILES" ]]; then
+        return 0
+    fi
+
+    info "Creating shared paths..."
+
+    # Create shared directories if they don't exist
+    if [[ -n "$SHARED_DIRECTORIES" ]]; then
+        IFS=',' read -ra DIRS <<< "$SHARED_DIRECTORIES"
+        for dir in "${DIRS[@]}"; do
+            if [[ -n "$dir" ]]; then
+                local SHARED_DIR_PATH="$SERVER_ROOT/shared/$dir"
+                if ! execSSH "$USER" "$DOMAIN" "test -d '$SHARED_DIR_PATH'"; then
+                    if execSSH "$USER" "$DOMAIN" "mkdir -p '$SHARED_DIR_PATH'"; then
+                        warning "Created missing shared directory: shared/$dir"
+                    else
+                        critical "Failed to create shared directory: shared/$dir"
+                        return 1
+                    fi
+                fi
+            fi
+        done
+    fi
+
+    # Create shared files if they don't exist
+    if [[ -n "$SHARED_FILES" ]]; then
+        IFS=',' read -ra FILES <<< "$SHARED_FILES"
+        for file in "${FILES[@]}"; do
+            if [[ -n "$file" ]]; then
+                local SHARED_FILE_PATH="$SERVER_ROOT/shared/$file"
+                local SHARED_FILE_DIR
+                SHARED_FILE_DIR=$(dirname "$SHARED_FILE_PATH")
+
+                # Create parent directory if needed
+                if ! execSSH "$USER" "$DOMAIN" "test -d '$SHARED_FILE_DIR'"; then
+                    if ! execSSH "$USER" "$DOMAIN" "mkdir -p '$SHARED_FILE_DIR'"; then
+                        critical "Failed to create shared file directory: $(dirname "shared/$file")"
+                        return 1
+                    fi
+                fi
+
+                # Create empty file if it doesn't exist
+                if ! execSSH "$USER" "$DOMAIN" "test -f '$SHARED_FILE_PATH'"; then
+                    if execSSH "$USER" "$DOMAIN" "touch '$SHARED_FILE_PATH'"; then
+                        warning "Created missing shared file: shared/$file"
+                    else
+                        critical "Failed to create shared file: shared/$file"
+                        return 1
+                    fi
+                fi
+            fi
+        done
+    fi
+
+    return 0
+}
+
+function symlinkSharedPaths() {
+    local USER="$1"
+    local DOMAIN="$2"
+    local SERVER_ROOT="$3"
+    local DEPLOYMENT_DIRECTORY="$4"
+    local SHARED_DIRECTORIES="$5"
+    local SHARED_FILES="$6"
+
+    if [[ -z "$SHARED_DIRECTORIES" && -z "$SHARED_FILES" ]]; then
+        return 0
+    fi
+
+    info "Creating symlinks for shared paths..."
+
+    # Symlink shared directories
+    if [[ -n "$SHARED_DIRECTORIES" ]]; then
+        IFS=',' read -ra DIRS <<< "$SHARED_DIRECTORIES"
+        for dir in "${DIRS[@]}"; do
+            if [[ -n "$dir" ]]; then
+                local TARGET_PATH="$SERVER_ROOT/current/$dir"
+                local SHARED_PATH="$SERVER_ROOT/shared/$dir"
+
+                # Remove existing file/directory at target location
+                if ! execSSH "$USER" "$DOMAIN" "rm -rf '$TARGET_PATH'"; then
+                    critical "Failed to remove existing path: $dir"
+                    return 1
+                fi
+
+                # Create symlink
+                if ! execSSH "$USER" "$DOMAIN" "ln -sf '$SHARED_PATH' '$TARGET_PATH'"; then
+                    critical "Failed to create symlink for shared directory: $dir"
+                    return 1
+                fi
+
+                info "Symlinked shared directory: $dir"
+            fi
+        done
+    fi
+
+    # Symlink shared files
+    if [[ -n "$SHARED_FILES" ]]; then
+        IFS=',' read -ra FILES <<< "$SHARED_FILES"
+        for file in "${FILES[@]}"; do
+            if [[ -n "$file" ]]; then
+                local TARGET_PATH="$SERVER_ROOT/current/$file"
+                local SHARED_PATH="$SERVER_ROOT/shared/$file"
+                local TARGET_DIR
+                TARGET_DIR=$(dirname "$TARGET_PATH")
+
+                # Create parent directory if needed
+                if ! execSSH "$USER" "$DOMAIN" "mkdir -p '$TARGET_DIR'"; then
+                    critical "Failed to create target directory for shared file: $(dirname "$file")"
+                    return 1
+                fi
+
+                # Remove existing file at target location
+                if ! execSSH "$USER" "$DOMAIN" "rm -f '$TARGET_PATH'"; then
+                    critical "Failed to remove existing file: $file"
+                    return 1
+                fi
+
+                # Create symlink
+                if ! execSSH "$USER" "$DOMAIN" "ln -sf '$SHARED_PATH' '$TARGET_PATH'"; then
+                    critical "Failed to create symlink for shared file: $file"
+                    return 1
+                fi
+
+                info "Symlinked shared file: $file"
+            fi
+        done
+    fi
+
+    return 0
 }
 
 function select_maintenance_mode() {
@@ -301,6 +443,49 @@ function select_maintenance_mode() {
     done
 
     choose_multiple "maintenance mode:" MAINTENANCE_MODE_MAP MAINTENANCE_MODE_ORDER
+}
+
+function handleSharedPaths() {
+    local ENV="$1"
+    local USER="$2"
+    local DOMAIN="$3"
+    local SERVER_ROOT="$4"
+    local DEPLOYMENT_DIRECTORY="$5"
+
+    local SHARED_DIRECTORIES=""
+    local SHARED_FILES=""
+
+    # Extract shared paths from environment configuration
+    if [[ -n "${JSON_DEPLOY_ENVS[$ENV]:-}" ]]; then
+        # Parse the environment configuration string
+        local ENV_CONFIG="${JSON_DEPLOY_ENVS[$ENV]}"
+
+        # Extract shared directories and files using parameter expansion
+        if [[ "$ENV_CONFIG" =~ SHARED_DIRECTORIES=([^[:space:]]*) ]]; then
+            SHARED_DIRECTORIES="${BASH_REMATCH[1]}"
+        fi
+
+        if [[ "$ENV_CONFIG" =~ SHARED_FILES=([^[:space:]]*) ]]; then
+            SHARED_FILES="${BASH_REMATCH[1]}"
+        fi
+    fi
+
+    # Only proceed if there are shared paths configured
+    if [[ -n "$SHARED_DIRECTORIES" || -n "$SHARED_FILES" ]]; then
+        # Create shared paths if they don't exist
+        if ! createSharedPaths "$USER" "$DOMAIN" "$SERVER_ROOT" "$SHARED_DIRECTORIES" "$SHARED_FILES"; then
+            critical "Failed to create shared paths"
+            return 1
+        fi
+
+        # Create symlinks for shared paths
+        if ! symlinkSharedPaths "$USER" "$DOMAIN" "$SERVER_ROOT" "$DEPLOYMENT_DIRECTORY" "$SHARED_DIRECTORIES" "$SHARED_FILES"; then
+            critical "Failed to create symlinks for shared paths"
+            return 1
+        fi
+    fi
+
+    return 0
 }
 
 

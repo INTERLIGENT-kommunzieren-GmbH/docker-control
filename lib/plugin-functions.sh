@@ -381,7 +381,13 @@ function addJsonDeployConfig() {
         fi
     fi
 
-    if ! addJsonEnvironment "$CONFIG_FILE" "$ENV" "$USER" "$DOMAIN" "$SERVICE_ROOT" "$DESCRIPTION" "$TEAMS_WEBHOOK_URL"; then
+    # Prompt for shared paths configuration
+    local SHARED_DIRECTORIES=()
+    local SHARED_FILES=()
+
+    promptSharedPaths SHARED_DIRECTORIES SHARED_FILES
+
+    if ! addJsonEnvironment "$CONFIG_FILE" "$ENV" "$USER" "$DOMAIN" "$SERVICE_ROOT" "$DESCRIPTION" "$TEAMS_WEBHOOK_URL" SHARED_DIRECTORIES SHARED_FILES; then
         critical "Failed to add environment '$ENV' to JSON configuration"
         exit 1
     fi
@@ -1484,5 +1490,112 @@ function select_release_tag() {
     done
 
     choose "Previous Tag / Release Branch" TAG_MAP TAG_ORDER
+}
+
+function promptSharedPaths() {
+    local -n shared_dirs_ref=$1
+    local -n shared_files_ref=$2
+
+    newline
+    info "Shared Paths Configuration"
+    info "Configure directories and files that need to be symlinked from shared storage during deployment."
+    info "All paths should be relative to the htdocs directory (no leading slash)."
+    newline
+
+    # Prompt for shared directories
+    info "Shared Directories"
+    info "These directories will be symlinked from the shared storage to persist data across deployments."
+    info "Examples: uploads, cache, logs, storage/temp"
+    newline
+
+    local CONFIGURE_SHARED_DIRS
+    CONFIGURE_SHARED_DIRS=$(confirm -n "Do you want to configure shared directories?")
+
+    if [ "$CONFIGURE_SHARED_DIRS" == "y" ]; then
+        while true; do
+            local SHARED_DIR
+            SHARED_DIR=$(input -l "Enter shared directory path (relative to htdocs, empty to finish)" -p "uploads")
+
+            if [[ -z "$SHARED_DIR" ]]; then
+                break
+            fi
+
+            # Validate path format
+            if validateSharedPath "$SHARED_DIR"; then
+                shared_dirs_ref+=("$SHARED_DIR")
+                info "Added shared directory: $SHARED_DIR"
+            else
+                warning "Invalid path format. Path should be relative to htdocs (no leading/trailing slashes)."
+            fi
+        done
+    fi
+
+    newline
+
+    # Prompt for shared files
+    info "Shared Files"
+    info "These files will be symlinked from the shared storage to persist configuration across deployments."
+    info "Examples: config/database.json, storage/app.log, .env.local"
+    newline
+
+    local CONFIGURE_SHARED_FILES
+    CONFIGURE_SHARED_FILES=$(confirm -n "Do you want to configure shared files?")
+
+    if [ "$CONFIGURE_SHARED_FILES" == "y" ]; then
+        while true; do
+            local SHARED_FILE
+            SHARED_FILE=$(input -l "Enter shared file path (relative to htdocs, empty to finish)" -p "config/database.json")
+
+            if [[ -z "$SHARED_FILE" ]]; then
+                break
+            fi
+
+            # Validate path format
+            if validateSharedPath "$SHARED_FILE"; then
+                shared_files_ref+=("$SHARED_FILE")
+                info "Added shared file: $SHARED_FILE"
+            else
+                warning "Invalid path format. Path should be relative to htdocs (no leading/trailing slashes)."
+            fi
+        done
+    fi
+
+    # Display summary
+    if [[ ${#shared_dirs_ref[@]} -gt 0 || ${#shared_files_ref[@]} -gt 0 ]]; then
+        newline
+        info "Shared Paths Summary:"
+        if [[ ${#shared_dirs_ref[@]} -gt 0 ]]; then
+            info "Shared directories: ${shared_dirs_ref[*]}"
+        fi
+        if [[ ${#shared_files_ref[@]} -gt 0 ]]; then
+            info "Shared files: ${shared_files_ref[*]}"
+        fi
+    fi
+}
+
+function validateSharedPath() {
+    local path="$1"
+
+    # Check if path is empty
+    if [[ -z "$path" ]]; then
+        return 1
+    fi
+
+    # Check for leading slash
+    if [[ "$path" =~ ^/ ]]; then
+        return 1
+    fi
+
+    # Check for trailing slash (except for single character paths)
+    if [[ ${#path} -gt 1 && "$path" =~ /$ ]]; then
+        return 1
+    fi
+
+    # Check for invalid characters (basic validation)
+    if [[ "$path" =~ [[:space:]] ]]; then
+        return 1
+    fi
+
+    return 0
 }
 

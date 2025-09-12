@@ -112,7 +112,7 @@ function loadJsonConfig() {
     
     while IFS= read -r env; do
         if [[ -n "$env" ]]; then
-            local USER DOMAIN SERVICE_ROOT TEAMS_WEBHOOK_URL
+            local USER DOMAIN SERVICE_ROOT TEAMS_WEBHOOK_URL SHARED_DIRECTORIES SHARED_FILES
 
             # Extract configuration values with defaults
             USER=$(jq -r ".environments[\"$env\"].user" "$CONFIG_FILE" 2>/dev/null)
@@ -120,8 +120,12 @@ function loadJsonConfig() {
             SERVICE_ROOT=$(jq -r ".environments[\"$env\"].serviceRoot // \"/var/www/html\"" "$CONFIG_FILE" 2>/dev/null)
             TEAMS_WEBHOOK_URL=$(jq -r ".environments[\"$env\"].teamsWebhookUrl // empty" "$CONFIG_FILE" 2>/dev/null)
 
+            # Extract shared paths arrays
+            SHARED_DIRECTORIES=$(jq -r ".environments[\"$env\"].sharedDirectories // [] | join(\",\")" "$CONFIG_FILE" 2>/dev/null)
+            SHARED_FILES=$(jq -r ".environments[\"$env\"].sharedFiles // [] | join(\",\")" "$CONFIG_FILE" 2>/dev/null)
+
             # Store in format compatible with existing code
-            JSON_DEPLOY_ENVS["$env"]="USER=$USER DOMAIN=$DOMAIN SERVICE_ROOT=$SERVICE_ROOT TEAMS_WEBHOOK_URL=$TEAMS_WEBHOOK_URL"
+            JSON_DEPLOY_ENVS["$env"]="USER=$USER DOMAIN=$DOMAIN SERVICE_ROOT=$SERVICE_ROOT TEAMS_WEBHOOK_URL=$TEAMS_WEBHOOK_URL SHARED_DIRECTORIES=$SHARED_DIRECTORIES SHARED_FILES=$SHARED_FILES"
         fi
     done <<< "$ENV_NAMES"
     
@@ -216,6 +220,8 @@ function addJsonEnvironment() {
     local SERVICE_ROOT="$5"
     local DESCRIPTION="$6"
     local TEAMS_WEBHOOK_URL="$7"
+    local -n SHARED_DIRECTORIES_REF=$8
+    local -n SHARED_FILES_REF=$9
 
     # Validate inputs
     if [[ -z "$ENV_NAME" || -z "$USER" || -z "$DOMAIN" ]]; then
@@ -240,6 +246,18 @@ function addJsonEnvironment() {
     local TEMP_FILE
     TEMP_FILE=$(mktemp)
 
+    # Build shared directories and files arrays
+    local SHARED_DIRS_JSON="[]"
+    local SHARED_FILES_JSON="[]"
+
+    if [[ ${#SHARED_DIRECTORIES_REF[@]} -gt 0 ]]; then
+        SHARED_DIRS_JSON=$(printf '%s\n' "${SHARED_DIRECTORIES_REF[@]}" | jq -R . | jq -s .)
+    fi
+
+    if [[ ${#SHARED_FILES_REF[@]} -gt 0 ]]; then
+        SHARED_FILES_JSON=$(printf '%s\n' "${SHARED_FILES_REF[@]}" | jq -R . | jq -s .)
+    fi
+
     # Build the new environment object
     local ENV_OBJECT
     ENV_OBJECT=$(jq -n \
@@ -248,13 +266,17 @@ function addJsonEnvironment() {
         --arg serviceRoot "$SERVICE_ROOT" \
         --arg description "$DESCRIPTION" \
         --arg teamsWebhookUrl "$TEAMS_WEBHOOK_URL" \
+        --argjson sharedDirectories "$SHARED_DIRS_JSON" \
+        --argjson sharedFiles "$SHARED_FILES_JSON" \
         '{
             user: $user,
             domain: $domain,
             serviceRoot: $serviceRoot,
             description: $description,
-            teamsWebhookUrl: $teamsWebhookUrl
-        }' | jq 'with_entries(select(.value != "" and .value != null))')
+            teamsWebhookUrl: $teamsWebhookUrl,
+            sharedDirectories: $sharedDirectories,
+            sharedFiles: $sharedFiles
+        }' | jq 'with_entries(select(.value != "" and .value != null and .value != []))')
 
     # Update the configuration file
     if jq \
