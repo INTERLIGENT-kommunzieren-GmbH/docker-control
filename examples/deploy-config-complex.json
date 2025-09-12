@@ -9,7 +9,8 @@
       "tags": ["production", "critical", "monitored"],
       "teamsWebhookUrl": "https://outlook.office.com/webhook/12345678-1234-1234-1234-123456789012@12345678-1234-1234-1234-123456789012/IncomingWebhook/abcdef1234567890abcdef1234567890/12345678-1234-1234-1234-123456789012",
       "sharedDirectories": ["uploads", "cache", "logs", "storage/temp"],
-      "sharedFiles": ["config/database.json", "storage/app.log", ".env.local"]
+      "sharedFiles": ["config/database.json", "storage/app.log", ".env.local"],
+      "copsIntegration": true
     },
     "staging": {
       "user": "deploy",
@@ -19,7 +20,8 @@
       "tags": ["staging", "testing"],
       "teamsWebhookUrl": "https://tenant.webhook.office.com/webhookb2/87654321-4321-4321-4321-210987654321@87654321-4321-4321-4321-210987654321/IncomingWebhook/fedcba0987654321fedcba0987654321/87654321-4321-4321-4321-210987654321",
       "sharedDirectories": ["uploads", "cache", "logs"],
-      "sharedFiles": ["config/database.json"]
+      "sharedFiles": ["config/database.json"],
+      "copsIntegration": false
     },
     "development": {
       "user": "dev",

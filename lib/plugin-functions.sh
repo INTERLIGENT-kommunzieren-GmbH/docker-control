@@ -387,7 +387,17 @@ function addJsonDeployConfig() {
 
     promptSharedPaths SHARED_DIRECTORIES SHARED_FILES
 
-    if ! addJsonEnvironment "$CONFIG_FILE" "$ENV" "$USER" "$DOMAIN" "$SERVICE_ROOT" "$DESCRIPTION" "$TEAMS_WEBHOOK_URL" SHARED_DIRECTORIES SHARED_FILES; then
+    # Prompt for COPS integration
+    newline
+    info "COPS Integration Configuration"
+    info "COPS integration executes cops:outdated and cops:permissions commands during deployment."
+    info "These commands run after maintenance mode is enabled but before deployment completes."
+    newline
+
+    local COPS_INTEGRATION
+    COPS_INTEGRATION=$(confirm -n "Do you want to enable COPS integration for this environment?")
+
+    if ! addJsonEnvironment "$CONFIG_FILE" "$ENV" "$USER" "$DOMAIN" "$SERVICE_ROOT" "$DESCRIPTION" "$TEAMS_WEBHOOK_URL" "$COPS_INTEGRATION" SHARED_DIRECTORIES SHARED_FILES; then
         critical "Failed to add environment '$ENV' to JSON configuration"
         exit 1
     fi

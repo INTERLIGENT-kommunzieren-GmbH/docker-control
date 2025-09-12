@@ -7,7 +7,8 @@
       "description": "Production environment",
       "teamsWebhookUrl": "https://outlook.office.com/webhook/12345678-1234-1234-1234-123456789012@12345678-1234-1234-1234-123456789012/IncomingWebhook/abcdef1234567890abcdef1234567890/12345678-1234-1234-1234-123456789012",
       "sharedDirectories": ["uploads", "cache", "logs"],
-      "sharedFiles": ["config/database.json", "storage/app.log"]
+      "sharedFiles": ["config/database.json", "storage/app.log"],
+      "copsIntegration": true
     }
   },
   "metadata": {

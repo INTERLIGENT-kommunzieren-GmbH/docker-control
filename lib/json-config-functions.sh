@@ -124,8 +124,11 @@ function loadJsonConfig() {
             SHARED_DIRECTORIES=$(jq -r ".environments[\"$env\"].sharedDirectories // [] | join(\",\")" "$CONFIG_FILE" 2>/dev/null)
             SHARED_FILES=$(jq -r ".environments[\"$env\"].sharedFiles // [] | join(\",\")" "$CONFIG_FILE" 2>/dev/null)
 
+            # Extract COPS integration setting
+            COPS_INTEGRATION=$(jq -r ".environments[\"$env\"].copsIntegration // false" "$CONFIG_FILE" 2>/dev/null)
+
             # Store in format compatible with existing code
-            JSON_DEPLOY_ENVS["$env"]="USER=$USER DOMAIN=$DOMAIN SERVICE_ROOT=$SERVICE_ROOT TEAMS_WEBHOOK_URL=$TEAMS_WEBHOOK_URL SHARED_DIRECTORIES=$SHARED_DIRECTORIES SHARED_FILES=$SHARED_FILES"
+            JSON_DEPLOY_ENVS["$env"]="USER=$USER DOMAIN=$DOMAIN SERVICE_ROOT=$SERVICE_ROOT TEAMS_WEBHOOK_URL=$TEAMS_WEBHOOK_URL COPS_INTEGRATION=$COPS_INTEGRATION SHARED_DIRECTORIES=$SHARED_DIRECTORIES SHARED_FILES=$SHARED_FILES"
         fi
     done <<< "$ENV_NAMES"
     
@@ -220,8 +223,9 @@ function addJsonEnvironment() {
     local SERVICE_ROOT="$5"
     local DESCRIPTION="$6"
     local TEAMS_WEBHOOK_URL="$7"
-    local -n SHARED_DIRECTORIES_REF=$8
-    local -n SHARED_FILES_REF=$9
+    local COPS_INTEGRATION="$8"
+    local -n SHARED_DIRECTORIES_REF=$9
+    local -n SHARED_FILES_REF=${10}
 
     # Validate inputs
     if [[ -z "$ENV_NAME" || -z "$USER" || -z "$DOMAIN" ]]; then
@@ -258,6 +262,12 @@ function addJsonEnvironment() {
         SHARED_FILES_JSON=$(printf '%s\n' "${SHARED_FILES_REF[@]}" | jq -R . | jq -s .)
     fi
 
+    # Convert COPS integration to boolean
+    local COPS_INTEGRATION_BOOL="false"
+    if [[ "$COPS_INTEGRATION" == "y" ]]; then
+        COPS_INTEGRATION_BOOL="true"
+    fi
+
     # Build the new environment object
     local ENV_OBJECT
     ENV_OBJECT=$(jq -n \
@@ -266,6 +276,7 @@ function addJsonEnvironment() {
         --arg serviceRoot "$SERVICE_ROOT" \
         --arg description "$DESCRIPTION" \
         --arg teamsWebhookUrl "$TEAMS_WEBHOOK_URL" \
+        --argjson copsIntegration "$COPS_INTEGRATION_BOOL" \
         --argjson sharedDirectories "$SHARED_DIRS_JSON" \
         --argjson sharedFiles "$SHARED_FILES_JSON" \
         '{
@@ -274,6 +285,7 @@ function addJsonEnvironment() {
             serviceRoot: $serviceRoot,
             description: $description,
             teamsWebhookUrl: $teamsWebhookUrl,
+            copsIntegration: $copsIntegration,
             sharedDirectories: $sharedDirectories,
             sharedFiles: $sharedFiles
         }' | jq 'with_entries(select(.value != "" and .value != null and .value != []))')

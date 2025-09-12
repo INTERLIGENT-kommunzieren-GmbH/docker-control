@@ -80,6 +80,12 @@
                 "description": "Relative path from htdocs directory (no leading or trailing slashes)"
               },
               "examples": [["config/database.json", "storage/app.log", ".env.local"]]
+            },
+            "copsIntegration": {
+              "type": "boolean",
+              "description": "Enable COPS integration during deployment. When enabled, executes cops:outdated and cops:permissions commands after maintenance mode is activated.",
+              "default": false,
+              "examples": [true, false]
             }
           },
           "required": ["user", "domain"],
@@ -153,7 +159,8 @@
           "description": "Production environment",
           "tags": ["production", "critical"],
           "sharedDirectories": ["uploads", "cache", "logs"],
-          "sharedFiles": ["config/database.json", "storage/app.log"]
+          "sharedFiles": ["config/database.json", "storage/app.log"],
+          "copsIntegration": true
         },
         "staging": {
           "user": "deploy",
@@ -162,7 +169,8 @@
           "description": "Staging environment for testing",
           "tags": ["staging", "testing"],
           "sharedDirectories": ["uploads", "cache"],
-          "sharedFiles": ["config/database.json"]
+          "sharedFiles": ["config/database.json"],
+          "copsIntegration": false
         }
       },
       "environmentOrder": ["production", "staging"],

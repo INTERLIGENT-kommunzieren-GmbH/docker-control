@@ -261,6 +261,15 @@ function deploy() {
         execSSH "$USER" "$DOMAIN" "$CONSOLE_PATH_NEW_RELEASE orm:schema-tool:update --dump-sql"
     fi
 
+    # Execute COPS integration commands if enabled
+    # This runs after all cache clearing and database operations are completed
+    if ! executeCopsIntegration "$ENV" "$USER" "$DOMAIN" "$CONSOLE_PATH_NEW_RELEASE"; then
+        critical "Deployment aborted due to COPS integration failure"
+        # Disable maintenance mode before exiting
+        execSSH "$USER" "$DOMAIN" "$CONSOLE_PATH_NEW_RELEASE shared:maintenance off"
+        return 1
+    fi
+
     if [[ $(type -t "post_deploy_hook_$ENV") == "function" ]]; then
         "post_deploy_hook_$ENV" "$USER" "$DOMAIN" "$SERVER_ROOT" "$DEPLOYMENT_DIRECTORY" "$CONSOLE_PATH_NEW_RELEASE"
     fi
@@ -443,6 +452,77 @@ function select_maintenance_mode() {
     done
 
     choose_multiple "maintenance mode:" MAINTENANCE_MODE_MAP MAINTENANCE_MODE_ORDER
+}
+
+function executeCopsIntegration() {
+    local ENV="$1"
+    local USER="$2"
+    local DOMAIN="$3"
+    local CONSOLE_PATH_NEW_RELEASE="$4"
+
+    local COPS_INTEGRATION="false"
+
+    # Extract COPS integration setting from environment configuration
+    if [[ -n "${JSON_DEPLOY_ENVS[$ENV]:-}" ]]; then
+        # Parse the environment configuration string
+        local ENV_CONFIG="${JSON_DEPLOY_ENVS[$ENV]}"
+
+        # Extract COPS integration setting using parameter expansion
+        if [[ "$ENV_CONFIG" =~ COPS_INTEGRATION=([^[:space:]]*) ]]; then
+            COPS_INTEGRATION="${BASH_REMATCH[1]}"
+        fi
+    fi
+
+    # Only proceed if COPS integration is enabled
+    if [[ "$COPS_INTEGRATION" == "true" ]]; then
+        info "Executing COPS integration commands..."
+        newline
+
+        # Execute cops:outdated command
+        info "Running cops:outdated command..."
+        if ! execSSH "$USER" "$DOMAIN" "$CONSOLE_PATH_NEW_RELEASE cops:outdated"; then
+            critical "COPS outdated command failed!"
+            newline
+            warning "This may indicate issues with COPS configuration or connectivity."
+
+            local CONTINUE_DEPLOYMENT
+            CONTINUE_DEPLOYMENT=$(confirm -n "Do you want to continue deployment despite COPS command failure?")
+
+            if [[ "$CONTINUE_DEPLOYMENT" != "y" ]]; then
+                critical "Deployment aborted due to COPS command failure"
+                return 1
+            fi
+
+            warning "Continuing deployment despite COPS outdated command failure..."
+        else
+            info "COPS outdated command completed successfully"
+        fi
+
+        # Execute cops:permissions command
+        info "Running cops:permissions command..."
+        if ! execSSH "$USER" "$DOMAIN" "$CONSOLE_PATH_NEW_RELEASE cops:permissions"; then
+            critical "COPS permissions command failed!"
+            newline
+            warning "This may indicate issues with COPS configuration or permissions."
+
+            local CONTINUE_DEPLOYMENT
+            CONTINUE_DEPLOYMENT=$(confirm -n "Do you want to continue deployment despite COPS command failure?")
+
+            if [[ "$CONTINUE_DEPLOYMENT" != "y" ]]; then
+                critical "Deployment aborted due to COPS command failure"
+                return 1
+            fi
+
+            warning "Continuing deployment despite COPS permissions command failure..."
+        else
+            info "COPS permissions command completed successfully"
+        fi
+
+        info "COPS integration commands processing completed"
+        newline
+    fi
+
+    return 0
 }
 
 function handleSharedPaths() {
