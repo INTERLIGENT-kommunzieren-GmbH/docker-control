@@ -51,113 +51,88 @@ function _pushWithErrorHandling() {
     fi
 }
 
-function synchronizeWithRemote() {
-    local PRIMARY_BRANCH
-    PRIMARY_BRANCH=$(getPrimaryBranch)
+function fetchRemoteInformation() {
+    info "=== Fetching Remote Repository Information ==="
 
-    info "=== Synchronizing with Remote Repository ==="
-
-    # Step 1: Fetch all remote updates
-    info "Fetching all remote updates..."
+    # Phase 1: Information Gathering Only
+    # Fetch all remote updates to get latest branch information
+    info "Fetching remote branch information..."
     if ! _git fetch --all; then
         critical "Failed to fetch remote updates"
         critical "Please check your network connection and repository access rights"
         exit 1
     fi
-    info "✓ Successfully fetched all remote updates"
+    info "✓ Successfully fetched remote branch information"
 
-    # Step 2: Synchronize the primary branch
-    info "Synchronizing primary branch ($PRIMARY_BRANCH)..."
+    # Update local knowledge of remote branches without modifying any content
+    info "✓ Remote branch catalog updated"
+}
 
-    # Check if primary branch exists locally
-    if ! _git rev-parse --verify "$PRIMARY_BRANCH" >/dev/null 2>&1; then
-        if _git rev-parse --verify "origin/$PRIMARY_BRANCH" >/dev/null 2>&1; then
-            info "Creating local tracking branch for $PRIMARY_BRANCH"
-            if ! _git branch "$PRIMARY_BRANCH" "origin/$PRIMARY_BRANCH"; then
-                critical "Failed to create local tracking branch for $PRIMARY_BRANCH"
-                exit 1
-            fi
-        else
-            critical "Primary branch $PRIMARY_BRANCH not found locally or on remote"
-            exit 1
-        fi
+function updateSelectedBranches() {
+    local BRANCHES_TO_UPDATE=("$@")
+    local PRIMARY_BRANCH
+    PRIMARY_BRANCH=$(getPrimaryBranch)
+
+    if [[ ${#BRANCHES_TO_UPDATE[@]} -eq 0 ]]; then
+        info "No specific branches to update"
+        return 0
     fi
 
-    # Switch to primary branch and pull latest changes
-    if ! _git checkout "$PRIMARY_BRANCH"; then
-        critical "Failed to checkout $PRIMARY_BRANCH branch"
-        exit 1
-    fi
+    info "=== Updating Selected Branches ==="
 
-    if ! _git pull origin "$PRIMARY_BRANCH"; then
-        critical "Failed to pull latest changes for $PRIMARY_BRANCH"
-        critical "There may be merge conflicts that need manual resolution"
-        exit 1
-    fi
-    info "✓ Successfully synchronized primary branch ($PRIMARY_BRANCH)"
+    for branch in "${BRANCHES_TO_UPDATE[@]}"; do
+        info "Updating branch: $branch"
 
-    # Step 3: Update existing release branches
-    info "Updating existing release branches..."
-    local RELEASE_BRANCHES=()
-    # Get both local and remote release branches, stripping origin/ prefix from remote branches
-    mapfile -t RELEASE_BRANCHES < <(_git branch -a --format='%(refname:short)' | sed 's|^origin/||' | grep -E '^[0-9]+\.[0-9]+\.x$' | sort -u)
-
-    if [[ ${#RELEASE_BRANCHES[@]} -gt 0 ]]; then
-        for branch in "${RELEASE_BRANCHES[@]}"; do
-            # Check if branch exists on remote
+        # Check if branch exists locally
+        if ! _git rev-parse --verify "$branch" >/dev/null 2>&1; then
+            # Check if it exists on remote
             if _git rev-parse --verify "origin/$branch" >/dev/null 2>&1; then
-                info "Updating release branch: $branch"
-
-                # Check if branch exists locally
-                if ! _git rev-parse --verify "$branch" >/dev/null 2>&1; then
-                    info "Creating local tracking branch for $branch"
-                    if ! _git branch "$branch" "origin/$branch"; then
-                        warning "Failed to create local tracking branch for $branch"
-                        continue
-                    fi
-                fi
-
-                # Switch to branch and pull latest changes
-                if _git checkout "$branch"; then
-                    if _git pull origin "$branch"; then
-                        info "✓ Successfully updated release branch: $branch"
-                    else
-                        warning "Failed to pull latest changes for release branch: $branch"
-                        warning "There may be merge conflicts that need manual resolution"
-                    fi
-                else
-                    warning "Failed to checkout release branch: $branch"
+                info "Creating local tracking branch for $branch"
+                if ! _git branch "$branch" "origin/$branch"; then
+                    warning "Failed to create local tracking branch for $branch"
+                    continue
                 fi
             else
-                info "Release branch $branch exists locally but not on remote (skipping)"
+                warning "Branch $branch not found locally or on remote"
+                continue
             fi
-        done
-
-        # Return to primary branch
-        if ! _git checkout "$PRIMARY_BRANCH"; then
-            warning "Failed to return to primary branch $PRIMARY_BRANCH"
         fi
-    else
-        info "No existing release branches found to update"
+
+        # Switch to branch and pull latest changes
+        if _git checkout "$branch"; then
+            if _git pull origin "$branch"; then
+                info "✓ Successfully updated branch: $branch"
+            else
+                warning "Failed to pull latest changes for branch: $branch"
+                warning "There may be merge conflicts that need manual resolution"
+            fi
+        else
+            warning "Failed to checkout branch: $branch"
+        fi
+    done
+
+    # Return to primary branch
+    if ! _git checkout "$PRIMARY_BRANCH"; then
+        warning "Failed to return to primary branch $PRIMARY_BRANCH"
     fi
 
-    # Step 4: Verify synchronization status
-    info "Verifying synchronization status..."
-    if ! _git status --porcelain | grep -q .; then
-        info "✓ Working directory is clean"
-    else
-        warning "Working directory has uncommitted changes"
-        _git status --short
-    fi
+    info "✓ Selected branch updates complete"
+}
 
-    # Verify we're on the primary branch
-    local CURRENT_BRANCH
-    CURRENT_BRANCH=$(_git branch --show-current)
-    if [[ "$CURRENT_BRANCH" == "$PRIMARY_BRANCH" ]]; then
-        info "✓ Currently on primary branch ($PRIMARY_BRANCH)"
-    else
-        warning "Currently on branch: $CURRENT_BRANCH (expected: $PRIMARY_BRANCH)"
-    fi
+function synchronizeWithRemote() {
+    # Legacy function - now uses the phased approach
+    # This maintains backward compatibility while implementing the new approach
+    local PRIMARY_BRANCH
+    PRIMARY_BRANCH=$(getPrimaryBranch)
+
+    info "=== Synchronizing with Remote Repository ==="
+
+    # Phase 1: Fetch remote information only
+    fetchRemoteInformation
+
+    # Phase 3: Update primary branch (most common case for legacy compatibility)
+    info "Updating primary branch ($PRIMARY_BRANCH)..."
+    updateSelectedBranches "$PRIMARY_BRANCH"
 
     info "=== Remote Synchronization Complete ==="
     newline
@@ -422,8 +397,8 @@ function gitCreateRelease() {
     # Validate primary branch exists
     validateBranchExists "$PRIMARY_BRANCH"
 
-    # Synchronize with remote repository (comprehensive sync)
-    synchronizeWithRemote
+    # Phase 1: Fetch remote information only (no branch modifications)
+    fetchRemoteInformation
 
     info "Pre-flight checks completed successfully"
     echo
@@ -449,6 +424,10 @@ function gitCreateRelease() {
 
         RELEASE="1.0.x"
         RELEASE_TYPE="INITIAL"
+
+        # Phase 3: Update primary branch before creating initial release branch
+        info "Updating primary branch for initial release creation..."
+        updateSelectedBranches "$PRIMARY_BRANCH"
 
         sub_headline "Creating Initial Release Branch"
         info "Automatically creating initial release: $RELEASE"
@@ -498,6 +477,11 @@ function gitCreateRelease() {
         "MAJOR")
             RELEASE=$(getNextMajorVersion)
             info "Automatically selected branch for breaking change: $RELEASE"
+
+            # Phase 3: Update primary branch before creating new release branch
+            info "Updating primary branch for new release creation..."
+            updateSelectedBranches "$PRIMARY_BRANCH"
+
             sub_headline "Creating Major Release Branch"
             gitCreateReleaseBranch "$RELEASE"
             info "✓ Successfully created major release branch: $RELEASE"
@@ -505,6 +489,11 @@ function gitCreateRelease() {
         "MINOR")
             RELEASE=$(getNextMinorVersion)
             info "Automatically selected branch for new feature: $RELEASE"
+
+            # Phase 3: Update primary branch before creating new release branch
+            info "Updating primary branch for new release creation..."
+            updateSelectedBranches "$PRIMARY_BRANCH"
+
             sub_headline "Creating Minor Release Branch"
             gitCreateReleaseBranch "$RELEASE"
             info "✓ Successfully created minor release branch: $RELEASE"
@@ -521,6 +510,10 @@ function gitCreateRelease() {
             fi
 
             info "✓ Selected release branch for patching: $SELECTED_BRANCH"
+
+            # Phase 3: Update the selected release branch
+            info "Updating selected release branch..."
+            updateSelectedBranches "$SELECTED_BRANCH"
 
             # Extract version components for patch logic (format: X.Y.x)
             local MAJOR MINOR

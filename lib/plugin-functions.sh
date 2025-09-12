@@ -223,9 +223,9 @@ function _deploy() {
     fi
     newline
 
-    # Synchronize with remote repository to ensure latest releases are available
-    info "Synchronizing with remote repository to fetch latest releases..."
-    synchronizeWithRemote
+    # Phase 1: Fetch remote information to ensure latest releases are available
+    info "Fetching remote repository information for release selection..."
+    fetchRemoteInformation
 
     # Select release/tag for deployment
     info "Selecting release for deployment..."
@@ -652,10 +652,10 @@ function _mergeReleaseToMain() {
         exit 1
     fi
 
-    # Synchronize with remote repository before any branch operations
-    synchronizeWithRemote
+    # Phase 1: Fetch remote information before branch operations
+    fetchRemoteInformation
 
-    # Get the release branch using existing function
+    # Phase 2: Get the release branch using existing function (user decision)
     RELEASE_BRANCH=$(getLatestReleaseBranch)
     # shellcheck disable=SC2181
     if [[ $? -ne 0 ]] || [[ -z "$RELEASE_BRANCH" ]]; then
@@ -674,6 +674,10 @@ function _mergeReleaseToMain() {
     fi
 
     info "Target branch: $TARGET_BRANCH"
+
+    # Phase 3: Update the selected branches before merge operations
+    info "Updating selected branches for merge operation..."
+    updateSelectedBranches "$RELEASE_BRANCH" "$TARGET_BRANCH"
 
     # Create merge branch name following the convention: {source-branch-name}-merge
     MERGE_BRANCH="${RELEASE_BRANCH}-merge"
