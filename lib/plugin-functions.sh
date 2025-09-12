@@ -73,13 +73,14 @@ EOF
 }
 
 function _createNewRelease() {
+    local MODULE_PARAM="$1"
     local CREATED_RELEASE
 
     sub_headline "create new release"
     newline
 
-    # Call the enhanced gitCreateRelease workflow (no parameters needed)
-    if gitCreateRelease; then
+    # Call the enhanced gitCreateRelease workflow with optional module parameter
+    if gitCreateRelease "$MODULE_PARAM"; then
         # Get the created release from REPLY variable
         CREATED_RELEASE="$REPLY"
 
@@ -135,7 +136,7 @@ function _deploy() {
     # Load deployment configuration
     local CONFIG_FILE
 
-    if [[ -z "$DEPLOY_ENVS" && -z "$JSON_DEPLOY_ENVS" ]]; then
+    if [[ ${#DEPLOY_ENVS[@]} -eq 0 && ${#JSON_DEPLOY_ENVS[@]} -eq 0 ]]; then
         CONFIG_FILE=$(getJsonConfigFile "$PROJECT_DIR" 2>/dev/null)
 
         if [[ -z "$CONFIG_FILE" ]]; then
@@ -163,8 +164,7 @@ function _deploy() {
     fi
 
     # Validate that configuration was loaded properly
-    # shellcheck disable=SC2128
-    if [[ -z "$DEPLOY_ENVS" ]]; then
+    if [[ ${#DEPLOY_ENVS[@]} -eq 0 ]]; then
         critical "Deployment configuration is empty or malformed"
         critical "Please check $CONFIG_FILE"
         exit 1
@@ -377,8 +377,8 @@ function _help() {
         $'deploy <env>\tDeploy selected release to specified environment'
         $'help\tShow this help and project status'
         $'init\tInitialize empty directory with project template'
-        $'merge\tMerge release branch to main using cherry-pick'
-        $'release\tCreate new release branch with automated versioning'
+        $'merge [module]\tMerge release branch to main using cherry-pick'
+        $'release [module]\tCreate new release branch with automated versioning'
         $'restart\tRestart project containers (stop and start)'
         $'start\tStart project containers'
         $'stop\tStop project containers'
@@ -412,6 +412,17 @@ function _help() {
     printHelp "Options" OPTIONS
     printHelp "Basic Usage" BASIC_COMMANDS
     printHelp "Advanced Usage" ADVANCED_COMMANDS
+
+    # Add module documentation
+    local MODULE_DOCS=(
+        $'Module Support:\tBoth release and merge commands support an optional module parameter'
+        $'  release [module]\tCreate release for vendor module (e.g., release ik/shared)'
+        $'  merge [module]\tMerge release for vendor module (e.g., merge ik/shared)'
+        $'  \tModule path is relative to htdocs/vendor/ directory'
+        $'  \tWorktrees are created under releases/vendor/<module>/ directory'
+        $'  \tModule directory must contain a valid Git repository'
+    )
+    printHelp "Module Operations" MODULE_DOCS
 
     # Check for control scripts in .docker-control directory first, then fallback to legacy location
     local CONTROL_SCRIPTS_DIR=""
@@ -510,7 +521,7 @@ function _showDeploymentStatus() {
         local DEPLOY_ENVS_LOCAL=()
         local CONFIG_VALID=false
 
-        if loadJsonConfig "$CONFIG_FILE" 2>/dev/null && [[ -n "$JSON_DEPLOY_ENVS" ]]; then
+        if loadJsonConfig "$CONFIG_FILE" 2>/dev/null && [[ ${#JSON_DEPLOY_ENVS[@]} -gt 0 ]]; then
             DEPLOY_ENVS_LOCAL=("${!JSON_DEPLOY_ENVS[@]}")
             CONFIG_VALID=true
         fi
@@ -632,6 +643,7 @@ function _install_plugin() {
 
 
 function _mergeReleaseToMain() {
+    local MODULE_PARAM="$1"
     local RELEASE_BRANCH
     local TARGET_BRANCH
     local MERGE_BRANCH
@@ -641,13 +653,22 @@ function _mergeReleaseToMain() {
     local RELEASE_WORKTREE_DIR
     local MERGE_WORKTREE_DIR
 
+    # Set module context if provided
+    if [[ -n "$MODULE_PARAM" ]]; then
+        setModuleContext "$MODULE_PARAM"
+    fi
+
     sub_headline "Merge Release to Main"
     newline
 
     # Validate that we're in a Git repository
     if ! _git rev-parse --git-dir >/dev/null 2>&1; then
         critical "Not in a Git repository or Git repository not accessible"
-        critical "Expected Git repository at: $PROJECT_DIR/htdocs"
+        if [[ -n "$MODULE_PATH" ]]; then
+            critical "Expected Git repository at: $PROJECT_DIR/htdocs/vendor/$MODULE_PATH"
+        else
+            critical "Expected Git repository at: $PROJECT_DIR/htdocs"
+        fi
         critical "Please ensure the Git repository exists and is accessible"
         exit 1
     fi
@@ -735,15 +756,17 @@ function _mergeReleaseToMain() {
     newline
 
     # Set up worktree directories
-    RELEASE_WORKTREE_DIR="$PROJECT_DIR/releases/$RELEASE_BRANCH"
-    MERGE_WORKTREE_DIR="$PROJECT_DIR/releases/$MERGE_BRANCH"
+    local WORKTREE_BASE_PATH
+    WORKTREE_BASE_PATH=$(getWorktreeBasePath)
+    RELEASE_WORKTREE_DIR="$WORKTREE_BASE_PATH/$RELEASE_BRANCH"
+    MERGE_WORKTREE_DIR="$WORKTREE_BASE_PATH/$MERGE_BRANCH"
 
     info "Using separate worktrees for source and merge branches"
     info "Release worktree: $RELEASE_WORKTREE_DIR"
     info "Merge worktree: $MERGE_WORKTREE_DIR"
 
     # Create releases directory if it doesn't exist
-    mkdir -p "$PROJECT_DIR/releases"
+    mkdir -p "$WORKTREE_BASE_PATH"
 
     # Create worktree for release branch
     # First check if the branch exists locally, if not, track it from origin
@@ -1211,7 +1234,7 @@ function parseArguments() {
             merge)
                 checkDir
                 shift
-                _mergeReleaseToMain
+                _mergeReleaseToMain "$1"
                 exit 0
                 ;;
             help)
@@ -1241,7 +1264,8 @@ function parseArguments() {
                 ;;
             release)
                 checkDir
-                _createNewRelease
+                shift
+                _createNewRelease "$1"
                 exit 0
                 ;;
             restart)

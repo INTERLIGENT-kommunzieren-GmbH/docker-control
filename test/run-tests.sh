@@ -131,6 +131,7 @@ main() {
             "test/test-json-config-functions.bats"
             "test/test-git-functions.bats"
             "test/test-plugin-functions.bats"
+            "test/test-module-functions.bats"
         )
 
         for test_file in "${UNIT_TEST_FILES[@]}"; do

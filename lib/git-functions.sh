@@ -1,7 +1,14 @@
 #!/bin/bash
 
+# Global variable to store current module path for Git operations
+MODULE_PATH=""
+
 function _git() {
-    git -C "$PROJECT_DIR"/htdocs "$@"
+    if [[ -n "$MODULE_PATH" ]]; then
+        git -C "$PROJECT_DIR/htdocs/vendor/$MODULE_PATH" "$@"
+    else
+        git -C "$PROJECT_DIR"/htdocs "$@"
+    fi
 }
 
 function _ensureGitConfig() {
@@ -9,6 +16,63 @@ function _ensureGitConfig() {
     if ! git config --global user.name >/dev/null 2>&1; then
         git config --global user.name "Docker Plugin"
         git config --global user.email "docker-plugin@interligent.com"
+    fi
+}
+
+function validateModulePath() {
+    local module_path="$1"
+
+    if [[ -z "$module_path" ]]; then
+        return 0  # No module path is valid (use main repository)
+    fi
+
+    # Validate module path format (should not start with / or contain ..)
+    if [[ "$module_path" =~ ^/ ]] || [[ "$module_path" =~ \.\. ]]; then
+        critical "Invalid module path: $module_path"
+        critical "Module path should be relative and not contain '..' sequences"
+        return 1
+    fi
+
+    local full_module_path="$PROJECT_DIR/htdocs/vendor/$module_path"
+
+    # Check if module directory exists
+    if [[ ! -d "$full_module_path" ]]; then
+        critical "Module directory does not exist: $full_module_path"
+        return 1
+    fi
+
+    # Check if module contains a Git repository
+    if ! git -C "$full_module_path" rev-parse --git-dir >/dev/null 2>&1; then
+        critical "Module directory is not a Git repository: $full_module_path"
+        critical "Please ensure the module contains a valid Git repository"
+        return 1
+    fi
+
+    return 0
+}
+
+function setModuleContext() {
+    local module_path="$1"
+
+    if ! validateModulePath "$module_path"; then
+        exit 1
+    fi
+
+    MODULE_PATH="$module_path"
+
+    if [[ -n "$MODULE_PATH" ]]; then
+        info "Working with module: $MODULE_PATH"
+        info "Module repository: $PROJECT_DIR/htdocs/vendor/$MODULE_PATH"
+    else
+        info "Working with main repository: $PROJECT_DIR/htdocs"
+    fi
+}
+
+function getWorktreeBasePath() {
+    if [[ -n "$MODULE_PATH" ]]; then
+        echo "$PROJECT_DIR/releases/vendor/$MODULE_PATH"
+    else
+        echo "$PROJECT_DIR/releases"
     fi
 }
 
@@ -380,9 +444,14 @@ function selectPatchReleaseBranch() {
 }
 
 function gitCreateRelease() {
-    local TAG="$1"
+    local MODULE_PARAM="$1"
     local RELEASE_TYPE=""
     local RELEASE=""
+
+    # Set module context if provided
+    if [[ -n "$MODULE_PARAM" ]]; then
+        setModuleContext "$MODULE_PARAM"
+    fi
 
     info "Starting release creation workflow..."
 
@@ -571,12 +640,14 @@ function gitCreateRelease() {
 
 function gitCreateReleaseBranch() {
     local RELEASE="$1"
-    local WORKTREE_DIR="$PROJECT_DIR/releases/$RELEASE"
+    local WORKTREE_BASE_PATH
+    WORKTREE_BASE_PATH=$(getWorktreeBasePath)
+    local WORKTREE_DIR="$WORKTREE_BASE_PATH/$RELEASE"
 
     # Ensure Git configuration is set
     _ensureGitConfig
 
-    mkdir -p "$PROJECT_DIR/releases"
+    mkdir -p "$WORKTREE_BASE_PATH"
     if ! _git worktree add "$WORKTREE_DIR" -b "$RELEASE" "$(getPrimaryBranch)"; then
         critical "Error: Failed to create release worktree" >&2
         exit 1
@@ -655,7 +726,9 @@ function gitCreateReleaseBranch() {
 function gitCreateTag() {
     local BRANCH_NAME="$1"
     local RELEASE="$2"
-    local WORKTREE_DIR="$PROJECT_DIR/releases/$BRANCH_NAME"
+    local WORKTREE_BASE_PATH
+    WORKTREE_BASE_PATH=$(getWorktreeBasePath)
+    local WORKTREE_DIR="$WORKTREE_BASE_PATH/$BRANCH_NAME"
 
     # Ensure Git configuration is set
     _ensureGitConfig
@@ -1034,7 +1107,9 @@ function gitGenerateAndCommitChangelog() {
         fi
     fi
 
-    WORKTREE_DIR="$PROJECT_DIR/releases/$BRANCH_NAME"
+    local WORKTREE_BASE_PATH
+    WORKTREE_BASE_PATH=$(getWorktreeBasePath)
+    WORKTREE_DIR="$WORKTREE_BASE_PATH/$BRANCH_NAME"
 
     # Check if worktree already exists
     if [[ ! -d "$WORKTREE_DIR" ]]; then
