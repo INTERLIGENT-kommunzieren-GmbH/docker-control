@@ -209,6 +209,7 @@ function getLatestTags() {
         local MINOR_VERSIONS=()
         local M m p
         mapfile -t MINOR_VERSIONS < <(printf "%s\n" "${TAGS[@]}" | while IFS=. read -r M m p; do
+            # shellcheck disable=SC2034  # p is used for parsing but not in this scope
             if [[ $M == "$MAJOR_VERSION" ]]; then
                 echo "$M.$m.0"
             fi
@@ -883,6 +884,7 @@ function writeChangelogToFile() {
     local TAG="$1"
     local WORKTREE_DIR="$2"
     local CHANGELOG_FILE="$WORKTREE_DIR/CHANGELOG.md"
+    # shellcheck disable=SC2034  # TEMP_FILE reserved for future use
     local TEMP_FILE="$WORKTREE_DIR/CHANGELOG.tmp"
     local TEMP_EDIT_FILE="$WORKTREE_DIR/CHANGELOG_EDIT.tmp"
 
@@ -1229,6 +1231,7 @@ function getLatestReleaseBranch() {
 
     IFS=$'\n'
     for BRANCH in $BRANCHES; do
+        # shellcheck disable=SC2034  # BRANCH_MAP used by choose function via nameref
         BRANCH_MAP["$BRANCH"]="$BRANCH"
         BRANCH_ORDER+=("$BRANCH")
     done

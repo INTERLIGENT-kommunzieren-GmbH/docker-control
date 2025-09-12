@@ -1,0 +1,18 @@
+# ShellCheck configuration for docker-plugin project
+
+# Disable SC1091 - Not following sourced files
+# This is expected for dynamically sourced files like .env and library scripts
+disable=SC1091
+
+# Disable style warnings that are not critical for functionality
+# SC2250 - Variable braces (style preference)
+# SC2248 - Double quoting (style preference)
+# SC2034 - Unused variables (often used by sourced scripts or reserved for future use)
+disable=SC2250,SC2248,SC2034
+
+# Set shell dialect
+shell=bash
+
+# External sources that should be considered available
+# (This helps with some sourcing issues)
+external-sources=true

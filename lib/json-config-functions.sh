@@ -136,7 +136,7 @@ function loadJsonConfig() {
         done <<< "$ORDER_ITEMS"
     else
         # Use alphabetical order if no order specified
-        JSON_DEPLOY_ENVS_ORDER=($(printf '%s\n' "${!JSON_DEPLOY_ENVS[@]}" | sort))
+        mapfile -t JSON_DEPLOY_ENVS_ORDER < <(printf '%s\n' "${!JSON_DEPLOY_ENVS[@]}" | sort)
     fi
     
     return 0
@@ -200,7 +200,7 @@ function createJsonConfig() {
 }
 EOF
 
-    if [[ $? -eq 0 ]]; then
+    if [[ -f "$CONFIG_FILE" ]]; then
         return 0
     else
         critical "Failed to create JSON configuration file: $CONFIG_FILE"

@@ -14,6 +14,42 @@ curl -sL https://raw.githubusercontent.com/INTERLIGENT-kommunzieren-GmbH/docker-
 
 This will install the plugin into `~/.docker/cli-plugins`, making it accessible with the `docker control` command.
 
+## Testing
+
+This project includes a comprehensive test suite to ensure code quality and reliability. The test suite covers:
+
+- **Unit Tests**: Individual function testing with mocking
+- **Integration Tests**: End-to-end workflow testing
+- **Static Analysis**: ShellCheck for code quality
+- **Continuous Integration**: Automated testing on GitHub Actions
+
+### Quick Start
+
+```bash
+# Run all tests
+./test/run-tests.sh
+
+# Run only unit tests
+./test/run-tests.sh --unit-only
+
+# Run with verbose output
+./test/run-tests.sh --verbose
+```
+
+### Dependencies
+
+Install test dependencies:
+
+```bash
+# Using Homebrew (recommended)
+brew install bats-core jq shellcheck
+
+# Using make (auto-detects package manager)
+make install-deps
+```
+
+For detailed testing documentation, see [test/README.md](test/README.md).
+
 ## Usage
 
 To use the plugin, invoke `docker control <command>`.

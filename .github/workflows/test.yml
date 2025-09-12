@@ -1,0 +1,262 @@
+name: Test Suite
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main, develop ]
+
+jobs:
+  test:
+    name: Run Tests
+    runs-on: ubuntu-latest
+    
+    strategy:
+      matrix:
+        test-type: [unit, integration, shellcheck]
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      
+    - name: Install dependencies
+      run: |
+        # Update package list
+        sudo apt-get update
+        
+        # Install required packages
+        sudo apt-get install -y jq
+        
+        # Install bats-core from GitHub releases (more recent than apt)
+        curl -sSL https://github.com/bats-core/bats-core/archive/v1.10.0.tar.gz | tar -xzf -
+        cd bats-core-1.10.0
+        sudo ./install.sh /usr/local
+        cd ..
+        rm -rf bats-core-1.10.0
+        
+        # Install shellcheck
+        sudo apt-get install -y shellcheck
+        
+        # Verify installations
+        bats --version
+        jq --version
+        shellcheck --version
+    
+    - name: Run unit tests
+      if: matrix.test-type == 'unit'
+      run: |
+        chmod +x test/run-tests.sh
+        ./test/run-tests.sh --unit-only --verbose
+    
+    - name: Run integration tests
+      if: matrix.test-type == 'integration'
+      run: |
+        chmod +x test/run-tests.sh
+        ./test/run-tests.sh --integration-only --verbose
+    
+    - name: Run shellcheck
+      if: matrix.test-type == 'shellcheck'
+      run: |
+        chmod +x test/run-tests.sh
+        ./test/run-tests.sh --no-unit --no-integration --verbose
+        
+    - name: Upload test results
+      if: always()
+      uses: actions/upload-artifact@v3
+      with:
+        name: test-results-${{ matrix.test-type }}
+        path: |
+          test/*.log
+          test/*.xml
+        retention-days: 30
+
+  test-coverage:
+    name: Test Coverage Report
+    runs-on: ubuntu-latest
+    needs: test
+    if: always()
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      
+    - name: Install dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y jq
+        
+        # Install bats-core
+        curl -sSL https://github.com/bats-core/bats-core/archive/v1.10.0.tar.gz | tar -xzf -
+        cd bats-core-1.10.0
+        sudo ./install.sh /usr/local
+        cd ..
+        rm -rf bats-core-1.10.0
+        
+        # Install shellcheck
+        sudo apt-get install -y shellcheck
+    
+    - name: Run all tests with coverage
+      run: |
+        chmod +x test/run-tests.sh
+        ./test/run-tests.sh --verbose > test-results.log 2>&1 || true
+        
+    - name: Generate coverage report
+      run: |
+        echo "## Test Coverage Report" > coverage-report.md
+        echo "" >> coverage-report.md
+        
+        # Count total functions in lib files
+        total_functions=$(grep -r "^function " lib/ | wc -l)
+        echo "Total functions in lib/: $total_functions" >> coverage-report.md
+        
+        # Count tested functions (approximate)
+        tested_functions=$(grep -r "@test.*:" test/ | wc -l)
+        echo "Total test cases: $tested_functions" >> coverage-report.md
+        
+        # Calculate rough coverage percentage
+        if [ $total_functions -gt 0 ]; then
+          coverage=$((tested_functions * 100 / total_functions))
+          echo "Estimated coverage: ${coverage}%" >> coverage-report.md
+        fi
+        
+        echo "" >> coverage-report.md
+        echo "### Test Results Summary" >> coverage-report.md
+        
+        if grep -q "All tests passed" test-results.log; then
+          echo "✅ All tests passed successfully!" >> coverage-report.md
+        else
+          echo "❌ Some tests failed. See details below." >> coverage-report.md
+        fi
+        
+        echo "" >> coverage-report.md
+        echo "### Detailed Results" >> coverage-report.md
+        echo '```' >> coverage-report.md
+        cat test-results.log >> coverage-report.md
+        echo '```' >> coverage-report.md
+        
+    - name: Upload coverage report
+      uses: actions/upload-artifact@v3
+      with:
+        name: coverage-report
+        path: coverage-report.md
+        retention-days: 30
+
+  validate-scripts:
+    name: Validate Shell Scripts
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      
+    - name: Install shellcheck
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y shellcheck
+        
+    - name: Validate all shell scripts
+      run: |
+        echo "Validating shell scripts..."
+        find . -name "*.sh" -type f | while read -r script; do
+          echo "Checking: $script"
+          shellcheck "$script"
+        done
+        
+    - name: Check script permissions
+      run: |
+        echo "Checking script permissions..."
+        
+        # Check that executable scripts have proper permissions
+        scripts_to_check=(
+          "install.sh"
+          "entrypoint.sh"
+          "plugin/docker-control"
+          "plugin/docker-control-wrapper-script"
+          "plugin/docker-control-local-wrapper-script"
+          "test/run-tests.sh"
+        )
+        
+        for script in "${scripts_to_check[@]}"; do
+          if [ -f "$script" ]; then
+            if [ -x "$script" ]; then
+              echo "✅ $script is executable"
+            else
+              echo "❌ $script should be executable"
+              exit 1
+            fi
+          else
+            echo "⚠️  $script not found"
+          fi
+        done
+
+  security-scan:
+    name: Security Scan
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      
+    - name: Run security checks
+      run: |
+        echo "Running basic security checks..."
+        
+        # Check for common security issues in shell scripts
+        echo "Checking for potential security issues..."
+        
+        # Look for eval usage (potential security risk)
+        if grep -r "eval " lib/ plugin/ --include="*.sh"; then
+          echo "⚠️  Found eval usage - review for security implications"
+        fi
+        
+        # Look for curl/wget without verification
+        if grep -r "curl.*http://" lib/ plugin/ --include="*.sh"; then
+          echo "⚠️  Found HTTP URLs - consider using HTTPS"
+        fi
+        
+        # Check for hardcoded credentials (basic check)
+        if grep -ri "password\|secret\|token" lib/ plugin/ --include="*.sh" | grep -v "placeholder\|example"; then
+          echo "⚠️  Potential hardcoded credentials found"
+        fi
+        
+        echo "Security scan completed"
+
+  documentation:
+    name: Documentation Check
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      
+    - name: Check documentation
+      run: |
+        echo "Checking documentation..."
+        
+        # Check that README exists and is not empty
+        if [ -f "README.md" ] && [ -s "README.md" ]; then
+          echo "✅ Main README.md exists and is not empty"
+        else
+          echo "❌ Main README.md is missing or empty"
+          exit 1
+        fi
+        
+        # Check that test documentation exists
+        if [ -f "test/README.md" ] && [ -s "test/README.md" ]; then
+          echo "✅ Test README.md exists and is not empty"
+        else
+          echo "❌ Test README.md is missing or empty"
+          exit 1
+        fi
+        
+        # Check for basic documentation sections
+        required_sections=("Installation" "Usage" "Examples")
+        for section in "${required_sections[@]}"; do
+          if grep -q "$section" README.md; then
+            echo "✅ Found $section section in README"
+          else
+            echo "⚠️  $section section not found in README"
+          fi
+        done
+        
+        echo "Documentation check completed"
