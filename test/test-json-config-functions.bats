@@ -94,36 +94,33 @@ load test-helpers
     createJsonConfig "$TEST_TEMP_DIR/config.json"
     
     # Test adding environment
-    run addJsonEnvironment "$TEST_TEMP_DIR/config.json" "staging" "develop" "testuser" "staging.example.com" "/var/www/html" "Staging environment"
-    
+    run addJsonEnvironment "$TEST_TEMP_DIR/config.json" "staging" "testuser" "staging.example.com" "/var/www/html" "Staging environment"
+
     [ "$status" -eq 0 ]
-    
+
     # Verify environment was added
     user=$(jq -r '.environments.staging.user' "$TEST_TEMP_DIR/config.json")
     [ "$user" = "testuser" ]
-    
+
     domain=$(jq -r '.environments.staging.domain' "$TEST_TEMP_DIR/config.json")
     [ "$domain" = "staging.example.com" ]
-    
-    branch=$(jq -r '.environments.staging.branch' "$TEST_TEMP_DIR/config.json")
-    [ "$branch" = "develop" ]
 }
 
-@test "json-config: addJsonEnvironment should add environment with branch" {
+@test "json-config: addJsonEnvironment should add environment with Teams webhook" {
     skip_if_no_command jq
 
     # Setup
     source_lib_functions
     createJsonConfig "$TEST_TEMP_DIR/config.json"
 
-    # Test adding environment with feature branch
-    run addJsonEnvironment "$TEST_TEMP_DIR/config.json" "dev" "feature-branch" "devuser" "dev.example.com" "/var/www/html" "Development environment"
+    # Test adding environment with Teams webhook URL
+    run addJsonEnvironment "$TEST_TEMP_DIR/config.json" "dev" "devuser" "dev.example.com" "/var/www/html" "Development environment" "https://outlook.office.com/webhook/test"
 
     [ "$status" -eq 0 ]
 
-    # Verify environment was added with correct branch
-    branch=$(jq -r '.environments.dev.branch' "$TEST_TEMP_DIR/config.json")
-    [ "$branch" = "feature-branch" ]
+    # Verify environment was added with correct Teams webhook URL
+    teamsWebhookUrl=$(jq -r '.environments.dev.teamsWebhookUrl' "$TEST_TEMP_DIR/config.json")
+    [ "$teamsWebhookUrl" = "https://outlook.office.com/webhook/test" ]
 
     user=$(jq -r '.environments.dev.user' "$TEST_TEMP_DIR/config.json")
     [ "$user" = "devuser" ]

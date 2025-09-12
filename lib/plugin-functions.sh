@@ -218,9 +218,6 @@ function _deploy() {
     text "  • User: {{ Foreground \"14\" \"$USER\" }}"
     text "  • Domain: {{ Foreground \"14\" \"$DOMAIN\" }}"
     text "  • Service Root: {{ Foreground \"14\" \"$SERVICE_ROOT\" }}"
-    if [[ -n "$BRANCH" ]]; then
-        text "  • Default Branch: {{ Foreground \"14\" \"$BRANCH\" }}"
-    fi
     newline
 
     # Phase 1: Fetch remote information to ensure latest releases are available
@@ -247,14 +244,41 @@ function _deploy() {
         exit 0
     fi
 
+    # Get project name and Teams webhook URL for notifications
+    local PROJECT_NAME=""
+    if [[ -f "$PROJECT_DIR/.env" ]]; then
+        # shellcheck disable=SC1090
+        source "$PROJECT_DIR/.env"
+        PROJECT_NAME="${PROJECTNAME:-$(basename "$PROJECT_DIR")}"
+    else
+        PROJECT_NAME=$(basename "$PROJECT_DIR")
+    fi
+
+    local TEAMS_WEBHOOK_URL
+    TEAMS_WEBHOOK_URL=$(getTeamsWebhookUrlForEnvironment "$ENV")
+
+    # Get changelog for notification from the specific release being deployed
+    local CHANGELOG
+    CHANGELOG=$(getChangelogFromRelease "$RELEASE" "$PROJECT_DIR")
+
+    # Send deployment started notification
+    sendTeamsDeploymentNotification "$TEAMS_WEBHOOK_URL" "$PROJECT_NAME" "$ENV" "$RELEASE" "started" "$CHANGELOG"
+
     # Execute deployment with error handling
     info "Starting deployment..."
     if deploy "$ENV" "$USER" "$DOMAIN" "$SERVICE_ROOT" "$RELEASE"; then
         newline
         info "Deployment completed successfully!"
         text 'Release {{ Foreground "14" "'"$RELEASE"'"}} has been deployed to {{ Foreground "14" "'"$ENV"'"}} environment'
+
+        # Send deployment success notification
+        sendTeamsDeploymentNotification "$TEAMS_WEBHOOK_URL" "$PROJECT_NAME" "$ENV" "$RELEASE" "success" "$CHANGELOG"
     else
         critical "Deployment failed"
+
+        # Send deployment failure notification
+        sendTeamsDeploymentNotification "$TEAMS_WEBHOOK_URL" "$PROJECT_NAME" "$ENV" "$RELEASE" "failed" "$CHANGELOG"
+
         exit 1
     fi
 }
@@ -272,34 +296,7 @@ function _showRunningProjects() {
     ) | column -t
 }
 
-function addDeployConfig() {
-    local ENV
-    input -n -l "environment" -r ENV
 
-    local BRANCH
-    input -l "branch" -d "env/$ENV" -r BRANCH
-
-    local USER
-    input -n -l "user" -r USER
-    local DOMAIN
-    input -n -l "domain" -d "$USER.projects.interligent.com" -r DOMAIN
-    input -n -l "server root" -d "/var/www/html" -r SERVICE_ROOT
-
-    cat <<EOF | tee -a "$PROJECT_DIR/.deploy.conf" 1>/dev/null
-DEPLOY_ENVS["$ENV"]="BRANCH=$BRANCH USER=$USER DOMAIN=$DOMAIN SERVICE_ROOT=$SERVICE_ROOT"
-DEPLOY_ENVS_ORDER+=("$ENV")
-
-EOF
-}
-
-function createDeployConfig() {
-    cat <<EOF | tee "$PROJECT_DIR/.deploy.conf" 1>/dev/null
-declare -A DEPLOY_ENVS
-declare -A DEPLOY_ENVS_ORDER
-
-EOF
-    addDeployConfig
-}
 
 function createJsonDeployConfig() {
     local CONFIG_FILE
@@ -341,9 +338,6 @@ function addJsonDeployConfig() {
     local ENV
     input -n -l "environment" -r ENV
 
-    local BRANCH
-    input -l "branch" -d "env/$ENV" -r BRANCH
-
     local USER
     input -n -l "user" -r USER
     local DOMAIN
@@ -354,7 +348,40 @@ function addJsonDeployConfig() {
     local DESCRIPTION
     input -l "description (optional)" -d "Deployment environment: $ENV" -r DESCRIPTION
 
-    if ! addJsonEnvironment "$CONFIG_FILE" "$ENV" "$BRANCH" "$USER" "$DOMAIN" "$SERVICE_ROOT" "$DESCRIPTION"; then
+    # Prompt for Microsoft Teams webhook URL for deployment notifications
+    newline
+    info "Microsoft Teams Deployment Notifications (Optional)"
+    info "Configure a Teams channel webhook URL to receive deployment notifications for this environment."
+    info "This will send notifications when deployments start, complete, or fail."
+    newline
+
+    local TEAMS_WEBHOOK_URL=""
+    local CONFIGURE_TEAMS_DEPLOY
+    CONFIGURE_TEAMS_DEPLOY=$(confirm -n "Do you want to configure Teams deployment notifications for '$ENV'?")
+
+    if [ "$CONFIGURE_TEAMS_DEPLOY" == "y" ]; then
+        while true; do
+            TEAMS_WEBHOOK_URL=$(input -l "Teams webhook URL for '$ENV' deployments" -p "https://outlook.office.com/webhook/...")
+
+            if validateTeamsWebhookUrl "$TEAMS_WEBHOOK_URL"; then
+                break
+            else
+                warning "Please enter a valid Microsoft Teams webhook URL or leave empty to skip."
+                local RETRY
+                RETRY=$(confirm "Do you want to try again?")
+                if [ "$RETRY" != "y" ]; then
+                    TEAMS_WEBHOOK_URL=""
+                    break
+                fi
+            fi
+        done
+
+        if [ -n "$TEAMS_WEBHOOK_URL" ]; then
+            info "Teams deployment notifications configured for environment '$ENV'."
+        fi
+    fi
+
+    if ! addJsonEnvironment "$CONFIG_FILE" "$ENV" "$USER" "$DOMAIN" "$SERVICE_ROOT" "$DESCRIPTION" "$TEAMS_WEBHOOK_URL"; then
         critical "Failed to add environment '$ENV' to JSON configuration"
         exit 1
     fi

@@ -242,10 +242,50 @@ load test-helpers
     assert_mock_called "gum"
 }
 
+
+
+@test "util-functions: validateTeamsWebhookUrl should accept valid Teams URLs" {
+    # Setup
+    create_simple_mock "gum" "mock output"
+    export GUM_EXECUTABLE="$TEST_TEMP_DIR/mocks/gum"
+    source "$LIB_DIR/util-functions.sh"
+
+    # Test valid outlook.office.com URL
+    run validateTeamsWebhookUrl "https://outlook.office.com/webhook/12345678-1234-1234-1234-123456789012@12345678-1234-1234-1234-123456789012/IncomingWebhook/abcdef1234567890abcdef1234567890/12345678-1234-1234-1234-123456789012"
+    [ "$status" -eq 0 ]
+
+    # Test valid tenant.webhook.office.com URL
+    run validateTeamsWebhookUrl "https://tenant.webhook.office.com/webhookb2/12345678-1234-1234-1234-123456789012@12345678-1234-1234-1234-123456789012/IncomingWebhook/abcdef1234567890abcdef1234567890/12345678-1234-1234-1234-123456789012"
+    [ "$status" -eq 0 ]
+
+    # Test empty URL (should be valid - user chose to skip)
+    run validateTeamsWebhookUrl ""
+    [ "$status" -eq 0 ]
+}
+
+@test "util-functions: validateTeamsWebhookUrl should reject invalid URLs" {
+    # Setup
+    create_simple_mock "gum" "mock output"
+    export GUM_EXECUTABLE="$TEST_TEMP_DIR/mocks/gum"
+    source "$LIB_DIR/util-functions.sh"
+
+    # Test invalid domain
+    run validateTeamsWebhookUrl "https://invalid.com/webhook/test"
+    [ "$status" -eq 1 ]
+
+    # Test HTTP instead of HTTPS
+    run validateTeamsWebhookUrl "http://outlook.office.com/webhook/test"
+    [ "$status" -eq 1 ]
+
+    # Test not a URL
+    run validateTeamsWebhookUrl "not-a-url"
+    [ "$status" -eq 1 ]
+}
+
 @test "util-functions: newline should output empty line" {
     # Setup
     source "$LIB_DIR/util-functions.sh"
-    
+
     # Test newline function
     run newline
     
@@ -286,4 +326,43 @@ load test-helpers
     [ "$status" -eq 1 ]
     assert_mock_called "critical"
     assert_mock_called "exit"
+}
+
+@test "util-functions: getChangelogFromRelease should handle missing project directory" {
+    source_lib_functions
+
+    run getChangelogFromRelease "v1.0.0" "/nonexistent/directory"
+
+    [ "$status" -eq 1 ]
+    [[ "$output" == "No changelog available" ]]
+}
+
+@test "util-functions: getChangelogFromRelease should handle missing release parameter" {
+    source_lib_functions
+
+    run getChangelogFromRelease "" "$TEST_TEMP_DIR"
+
+    [ "$status" -eq 1 ]
+    [[ "$output" == "No changelog available" ]]
+}
+
+@test "util-functions: getChangelogFromRelease should fallback to current changelog when git fails" {
+    source_lib_functions
+
+    # Create test project structure
+    mkdir -p "$TEST_TEMP_DIR/htdocs"
+    echo "# Test Changelog" > "$TEST_TEMP_DIR/htdocs/CHANGELOG.md"
+    echo "## Version 1.0.0" >> "$TEST_TEMP_DIR/htdocs/CHANGELOG.md"
+    echo "- Initial release" >> "$TEST_TEMP_DIR/htdocs/CHANGELOG.md"
+
+    # Mock git command to fail
+    git() {
+        return 1
+    }
+
+    run getChangelogFromRelease "v1.0.0" "$TEST_TEMP_DIR"
+
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"Test Changelog"* ]]
+    [[ "$output" == *"Initial release"* ]]
 }

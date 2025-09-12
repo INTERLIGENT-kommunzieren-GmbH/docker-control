@@ -112,16 +112,16 @@ function loadJsonConfig() {
     
     while IFS= read -r env; do
         if [[ -n "$env" ]]; then
-            local BRANCH USER DOMAIN SERVICE_ROOT
+            local USER DOMAIN SERVICE_ROOT TEAMS_WEBHOOK_URL
 
             # Extract configuration values with defaults
-            BRANCH=$(jq -r ".environments[\"$env\"].branch // empty" "$CONFIG_FILE" 2>/dev/null)
             USER=$(jq -r ".environments[\"$env\"].user" "$CONFIG_FILE" 2>/dev/null)
             DOMAIN=$(jq -r ".environments[\"$env\"].domain" "$CONFIG_FILE" 2>/dev/null)
             SERVICE_ROOT=$(jq -r ".environments[\"$env\"].serviceRoot // \"/var/www/html\"" "$CONFIG_FILE" 2>/dev/null)
+            TEAMS_WEBHOOK_URL=$(jq -r ".environments[\"$env\"].teamsWebhookUrl // empty" "$CONFIG_FILE" 2>/dev/null)
 
             # Store in format compatible with existing code
-            JSON_DEPLOY_ENVS["$env"]="BRANCH=$BRANCH USER=$USER DOMAIN=$DOMAIN SERVICE_ROOT=$SERVICE_ROOT"
+            JSON_DEPLOY_ENVS["$env"]="USER=$USER DOMAIN=$DOMAIN SERVICE_ROOT=$SERVICE_ROOT TEAMS_WEBHOOK_URL=$TEAMS_WEBHOOK_URL"
         fi
     done <<< "$ENV_NAMES"
     
@@ -211,11 +211,11 @@ EOF
 function addJsonEnvironment() {
     local CONFIG_FILE="$1"
     local ENV_NAME="$2"
-    local BRANCH="$3"
-    local USER="$4"
-    local DOMAIN="$5"
-    local SERVICE_ROOT="$6"
-    local DESCRIPTION="$7"
+    local USER="$3"
+    local DOMAIN="$4"
+    local SERVICE_ROOT="$5"
+    local DESCRIPTION="$6"
+    local TEAMS_WEBHOOK_URL="$7"
 
     # Validate inputs
     if [[ -z "$ENV_NAME" || -z "$USER" || -z "$DOMAIN" ]]; then
@@ -243,17 +243,17 @@ function addJsonEnvironment() {
     # Build the new environment object
     local ENV_OBJECT
     ENV_OBJECT=$(jq -n \
-        --arg branch "$BRANCH" \
         --arg user "$USER" \
         --arg domain "$DOMAIN" \
         --arg serviceRoot "$SERVICE_ROOT" \
         --arg description "$DESCRIPTION" \
+        --arg teamsWebhookUrl "$TEAMS_WEBHOOK_URL" \
         '{
-            branch: $branch,
             user: $user,
             domain: $domain,
             serviceRoot: $serviceRoot,
-            description: $description
+            description: $description,
+            teamsWebhookUrl: $teamsWebhookUrl
         }' | jq 'with_entries(select(.value != "" and .value != null))')
 
     # Update the configuration file

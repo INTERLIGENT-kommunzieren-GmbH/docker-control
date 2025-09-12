@@ -277,3 +277,197 @@ function warning() {
     newline
     "$GUM_EXECUTABLE" style --foreground="11" "$MESSAGE"
 }
+
+function validateTeamsWebhookUrl() {
+    local url="$1"
+
+    if [[ -z "$url" ]]; then
+        return 0  # Empty URL is valid (user chose to skip)
+    fi
+
+    # Microsoft Teams webhook URLs follow this pattern:
+    # https://outlook.office.com/webhook/...
+    # or https://<tenant>.webhook.office.com/webhookb2/...
+    if [[ "$url" =~ ^https://outlook\.office\.com/webhook/ ]] || \
+       [[ "$url" =~ ^https://[a-zA-Z0-9-]+\.webhook\.office\.com/webhookb2/ ]]; then
+        return 0
+    else
+        critical "Invalid Microsoft Teams webhook URL format"
+        critical "Expected format: https://outlook.office.com/webhook/... or https://<tenant>.webhook.office.com/webhookb2/..."
+        return 1
+    fi
+}
+
+function getTeamsWebhookUrlForEnvironment() {
+    local environment="$1"
+
+    # Try to get from JSON configuration first
+    if [[ -n "${JSON_DEPLOY_ENVS[$environment]:-}" ]]; then
+        local env_config="${JSON_DEPLOY_ENVS[$environment]}"
+        # Extract TEAMS_WEBHOOK_URL from the configuration string
+        if [[ "$env_config" =~ TEAMS_WEBHOOK_URL=([^[:space:]]*) ]]; then
+            echo "${BASH_REMATCH[1]}"
+            return 0
+        fi
+    fi
+
+    # Try legacy configuration if JSON not available
+    if [[ -n "${DEPLOY_ENVS[$environment]:-}" ]]; then
+        local env_config="${DEPLOY_ENVS[$environment]}"
+        # Extract TEAMS_WEBHOOK_URL from the configuration string
+        if [[ "$env_config" =~ TEAMS_WEBHOOK_URL=([^[:space:]]*) ]]; then
+            echo "${BASH_REMATCH[1]}"
+            return 0
+        fi
+    fi
+
+    # No webhook URL found
+    echo ""
+    return 1
+}
+
+function getChangelogFromRelease() {
+    local release="$1"
+    local project_dir="$2"
+
+    # Validate inputs
+    if [[ -z "$release" || -z "$project_dir" ]]; then
+        echo "No changelog available"
+        return 1
+    fi
+
+    # Check if htdocs directory exists
+    if [[ ! -d "$project_dir/htdocs" ]]; then
+        echo "No changelog available"
+        return 1
+    fi
+
+    # Try to extract CHANGELOG.md from the specific release using git
+    local changelog=""
+    if command -v git >/dev/null 2>&1; then
+        # Try to get CHANGELOG.md from the specific commit/tag/branch
+        changelog=$(git -C "$project_dir/htdocs" show "$release:CHANGELOG.md" 2>/dev/null | head -20 | sed 's/"/\\"/g' | tr '\n' ' ' | sed 's/[[:space:]]*$//')
+
+        # If that fails, try alternative paths
+        if [[ -z "$changelog" ]]; then
+            changelog=$(git -C "$project_dir/htdocs" show "$release:changelog.md" 2>/dev/null | head -20 | sed 's/"/\\"/g' | tr '\n' ' ' | sed 's/[[:space:]]*$//')
+        fi
+
+        # If still no changelog found, try CHANGELOG (without extension)
+        if [[ -z "$changelog" ]]; then
+            changelog=$(git -C "$project_dir/htdocs" show "$release:CHANGELOG" 2>/dev/null | head -20 | sed 's/"/\\"/g' | tr '\n' ' ' | sed 's/[[:space:]]*$//')
+        fi
+    fi
+
+    # If we couldn't extract from git, fall back to current working directory as last resort
+    if [[ -z "$changelog" ]]; then
+        if [[ -f "$project_dir/htdocs/CHANGELOG.md" ]]; then
+            changelog=$(head -20 "$project_dir/htdocs/CHANGELOG.md" | sed 's/"/\\"/g' | tr '\n' ' ' | sed 's/[[:space:]]*$//')
+        elif [[ -f "$project_dir/htdocs/changelog.md" ]]; then
+            changelog=$(head -20 "$project_dir/htdocs/changelog.md" | sed 's/"/\\"/g' | tr '\n' ' ' | sed 's/[[:space:]]*$//')
+        elif [[ -f "$project_dir/htdocs/CHANGELOG" ]]; then
+            changelog=$(head -20 "$project_dir/htdocs/CHANGELOG" | sed 's/"/\\"/g' | tr '\n' ' ' | sed 's/[[:space:]]*$//')
+        fi
+    fi
+
+    # Return the changelog or default message
+    if [[ -n "$changelog" ]]; then
+        echo "$changelog"
+    else
+        echo "No changelog available for release $release"
+    fi
+}
+
+function sendTeamsDeploymentNotification() {
+    local webhook_url="$1"
+    local project_name="$2"
+    local environment="$3"
+    local release="$4"
+    local status="$5"
+    local changelog="$6"
+
+    # Skip if no webhook URL is provided
+    if [[ -z "$webhook_url" ]]; then
+        return 0
+    fi
+
+    # Validate required parameters
+    if [[ -z "$project_name" || -z "$environment" || -z "$release" || -z "$status" ]]; then
+        warning "Missing required parameters for Teams notification"
+        return 1
+    fi
+
+    # Set default values
+    if [[ -z "$changelog" ]]; then
+        changelog="No changelog available"
+    fi
+
+    # Determine color and title based on status
+    local color=""
+    local title=""
+    case "$status" in
+        "started")
+            color="0078D4"  # Blue
+            title="🚀 Deployment Started"
+            ;;
+        "success")
+            color="107C10"  # Green
+            title="✅ Deployment Successful"
+            ;;
+        "failed")
+            color="D13438"  # Red
+            title="❌ Deployment Failed"
+            ;;
+        *)
+            color="605E5C"  # Gray
+            title="📋 Deployment Update"
+            ;;
+    esac
+
+    # Create Teams message card payload
+    local payload
+    payload=$(cat <<EOF
+{
+    "@type": "MessageCard",
+    "@context": "http://schema.org/extensions",
+    "themeColor": "$color",
+    "summary": "$title: $project_name ($environment)",
+    "sections": [{
+        "activityTitle": "$title",
+        "activitySubtitle": "$project_name",
+        "facts": [{
+            "name": "Project:",
+            "value": "$project_name"
+        }, {
+            "name": "Environment:",
+            "value": "$environment"
+        }, {
+            "name": "Release:",
+            "value": "$release"
+        }, {
+            "name": "Status:",
+            "value": "$status"
+        }],
+        "text": "**Changelog:**\\n\\n$changelog"
+    }]
+}
+EOF
+)
+
+    # Send the webhook notification
+    if command -v curl >/dev/null 2>&1; then
+        if curl -s -X POST \
+            -H "Content-Type: application/json" \
+            -d "$payload" \
+            "$webhook_url" >/dev/null 2>&1; then
+            debug "Teams notification sent successfully"
+            return 0
+        else
+            warning "Failed to send Teams notification to $webhook_url"
+            return 1
+        fi
+    else
+        warning "curl not available - cannot send Teams notification"
+        return 1
+    fi
+}
