@@ -24,6 +24,13 @@ function checkDir() {
     fi
 }
 
+# Creates a new custom control script with the specified name
+# This function generates a template script file in the appropriate control scripts directory
+# Parameters:
+#   $1 - The name of the control script to create (without .sh extension)
+# The script will be created in either:
+#   - $PROJECT_DIR/htdocs/.docker-control/control-scripts/ (preferred location)
+#   - $PROJECT_DIR/control-scripts/ (legacy fallback location)
 function _createControlScript {
     local COMMAND=$1
     local CONTROL_SCRIPTS_DIR
@@ -1266,6 +1273,21 @@ function parseArguments() {
                 checkDir
                 shift
                 _console "${1:-php}"
+                exit 0
+                ;;
+            create-control-script)
+                checkDir
+                shift
+                # Validate that a script name was provided
+                if [[ -z "$1" ]]; then
+                    critical "Script name parameter missing"
+                    newline
+                    text 'Usage: {{ Foreground "14" "docker control create-control-script <name>" }}'
+                    newline
+                    text 'Example: {{ Foreground "14" "docker control create-control-script my-script" }}'
+                    exit 1
+                fi
+                _createControlScript "$1"
                 exit 0
                 ;;
             deploy)
