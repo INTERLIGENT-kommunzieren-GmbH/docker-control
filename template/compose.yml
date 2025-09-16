@@ -37,7 +37,7 @@ services:
       - "./volumes/db/data:/var/lib/mysql:cached"
       - "./volumes/db/init:/docker-entrypoint-initdb.d:cached"
       - "./logs/mysql:/var/log/mysql"
-      - db-share:/db-share
+      - "./volumes/db-share:/db-share"
 
   phpmyadmin:
     labels:
@@ -177,7 +177,7 @@ services:
       - "./htdocs:/var/www/html"
       - "./logs/apache:/var/log/apache"
       - "./volumes/composer-cache:/var/www/.composer/cache"
-      - db-share:/db-share
+      - "./volumes/db-share:/db-share"
 
   logrotate:
     labels:
@@ -221,10 +221,3 @@ networks:
   backend-tier:
     driver: bridge
 
-volumes:
-  db-share:
-    driver: local
-    driver_opts:
-      type: none
-      o: bind
-      device: ./volumes/db-share
