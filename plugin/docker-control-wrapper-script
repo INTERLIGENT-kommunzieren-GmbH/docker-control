@@ -220,7 +220,6 @@ configure_docker_options() {
         --rm -it
         --network host
         --add-host host.docker.internal:host-gateway
-        -u "$(id -u):$(id -g)"
         -e UID="$(id -u)"
         -e GID="$(id -g)"
         -e USER="$(whoami)"
