@@ -378,6 +378,12 @@ function getChangelogFromRelease() {
     fi
 }
 
+# Sanitize names for use as identifiers, environment variables, or file names
+function sanitizeName() {
+    local input="$1"
+    echo "$input" | tr "[:upper:]/\\.:,-" "[:lower:]______"
+}
+
 function sendTeamsDeploymentNotification() {
     local webhook_url="$1"
     local project_name="$2"

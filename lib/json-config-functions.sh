@@ -3,6 +3,9 @@
 # JSON Configuration Functions for Docker Control Plugin
 # Provides functions to read, validate, and manipulate JSON deployment configurations
 
+# Source utility functions for sanitizeName and other utilities
+. "${LIB_DIR:-$(dirname "${BASH_SOURCE[0]}")}/util-functions.sh"
+
 # Global variables for JSON configuration
 declare -A JSON_DEPLOY_ENVS
 declare -a JSON_DEPLOY_ENVS_ORDER
@@ -52,6 +55,10 @@ function validateJsonConfig() {
     
     while IFS= read -r env; do
         if [[ -n "$env" ]]; then
+            # Sanitize environment name for internal use
+            local SANITIZED_ENV
+            SANITIZED_ENV=$(sanitizeName "$env")
+
             # Check required fields for each environment
             local USER DOMAIN
             USER=$(jq -r ".environments[\"$env\"].user // empty" "$CONFIG_FILE" 2>/dev/null)
@@ -112,6 +119,10 @@ function loadJsonConfig() {
     
     while IFS= read -r env; do
         if [[ -n "$env" ]]; then
+            # Sanitize environment name for variable storage
+            local SANITIZED_ENV
+            SANITIZED_ENV=$(sanitizeName "$env")
+
             local USER DOMAIN SERVICE_ROOT TEAMS_WEBHOOK_URL SHARED_DIRECTORIES SHARED_FILES
 
             # Extract configuration values with defaults
@@ -127,8 +138,10 @@ function loadJsonConfig() {
             # Extract COPS integration setting
             COPS_INTEGRATION=$(jq -r ".environments[\"$env\"].copsIntegration // false" "$CONFIG_FILE" 2>/dev/null)
 
-            # Store in format compatible with existing code
-            JSON_DEPLOY_ENVS["$env"]="USER=$USER DOMAIN=$DOMAIN SERVICE_ROOT=$SERVICE_ROOT TEAMS_WEBHOOK_URL=$TEAMS_WEBHOOK_URL COPS_INTEGRATION=$COPS_INTEGRATION SHARED_DIRECTORIES=$SHARED_DIRECTORIES SHARED_FILES=$SHARED_FILES"
+            # Store using sanitized name for internal processing
+            JSON_DEPLOY_ENVS["$SANITIZED_ENV"]="USER=$USER DOMAIN=$DOMAIN SERVICE_ROOT=$SERVICE_ROOT TEAMS_WEBHOOK_URL=$TEAMS_WEBHOOK_URL COPS_INTEGRATION=$COPS_INTEGRATION SHARED_DIRECTORIES=$SHARED_DIRECTORIES SHARED_FILES=$SHARED_FILES"
+            # Also store original name mapping
+            JSON_DEPLOY_ENVS["${SANITIZED_ENV}_ORIGINAL"]="$env"
         fi
     done <<< "$ENV_NAMES"
     

@@ -328,6 +328,36 @@ load test-helpers
     assert_mock_called "exit"
 }
 
+@test "util-functions: sanitizeName should convert names to safe identifiers" {
+    # Setup
+    source "$LIB_DIR/util-functions.sh"
+
+    # Test basic sanitization
+    run sanitizeName "Test/Name.With:Special-Chars"
+    [ "$status" -eq 0 ]
+    [ "$output" = "test_name_with_special_chars" ]
+
+    # Test uppercase conversion
+    run sanitizeName "UPPERCASE"
+    [ "$status" -eq 0 ]
+    [ "$output" = "uppercase" ]
+
+    # Test special characters
+    run sanitizeName "test/path.file.ext:port,value"
+    [ "$status" -eq 0 ]
+    [ "$output" = "test_path_file_ext_port_value" ]
+
+    # Test hyphen conversion
+    run sanitizeName "test-name"
+    [ "$status" -eq 0 ]
+    [ "$output" = "test_name" ]
+
+    # Test empty input
+    run sanitizeName ""
+    [ "$status" -eq 0 ]
+    [ "$output" = "" ]
+}
+
 @test "util-functions: getChangelogFromRelease should handle missing project directory" {
     source_lib_functions
 

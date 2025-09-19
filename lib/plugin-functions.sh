@@ -140,6 +140,10 @@ function _deploy() {
         exit 1
     fi
 
+    # Sanitize environment name for internal processing
+    local SANITIZED_ENV
+    SANITIZED_ENV=$(sanitizeName "$ENV")
+
     # Load deployment configuration
     local CONFIG_FILE
 
@@ -177,8 +181,8 @@ function _deploy() {
         exit 1
     fi
 
-    # Check if the specified environment exists
-    if [[ -z "${DEPLOY_ENVS[$ENV]+set}" ]]; then
+    # Check if the specified environment exists (check both original and sanitized)
+    if [[ -z "${DEPLOY_ENVS[$ENV]+set}" && -z "${DEPLOY_ENVS[$SANITIZED_ENV]+set}" ]]; then
         critical "Environment '$ENV' is not configured"
         newline
         if [[ ${#DEPLOY_ENVS[@]} -gt 0 ]]; then
@@ -189,17 +193,23 @@ function _deploy() {
         exit 1
     fi
 
+    # Use sanitized environment name for processing
+    local ENV_KEY="$ENV"
+    if [[ -n "${DEPLOY_ENVS[$SANITIZED_ENV]+set}" ]]; then
+        ENV_KEY="$SANITIZED_ENV"
+    fi
+
     info "Deploying to environment: $ENV"
     newline
 
-    # Load environment-specific configuration
+    # Load environment-specific configuration using sanitized key
     local BRANCH
     local USER
     local DOMAIN
     local SERVICE_ROOT
 
     # Evaluate the environment configuration with error handling
-    if ! eval "${DEPLOY_ENVS[$ENV]}"; then
+    if ! eval "${DEPLOY_ENVS[$ENV_KEY]}"; then
         critical "Failed to load configuration for environment '$ENV'"
         critical "The environment configuration may be malformed"
         exit 1
@@ -345,6 +355,17 @@ function addJsonDeployConfig() {
     local ENV
     input -n -l "environment" -r ENV
 
+    # Sanitize environment name
+    local SANITIZED_ENV
+    SANITIZED_ENV=$(sanitizeName "$ENV")
+
+    # Warn user if sanitization changed the name
+    if [[ "$ENV" != "$SANITIZED_ENV" ]]; then
+        warning "Environment name sanitized from '$ENV' to '$SANITIZED_ENV'"
+        warning "Special characters converted to underscores for safe usage"
+        newline
+    fi
+
     local USER
     input -n -l "user" -r USER
     local DOMAIN
@@ -404,12 +425,12 @@ function addJsonDeployConfig() {
     local COPS_INTEGRATION
     COPS_INTEGRATION=$(confirm -n "Do you want to enable COPS integration for this environment?")
 
-    if ! addJsonEnvironment "$CONFIG_FILE" "$ENV" "$USER" "$DOMAIN" "$SERVICE_ROOT" "$DESCRIPTION" "$TEAMS_WEBHOOK_URL" "$COPS_INTEGRATION" SHARED_DIRECTORIES SHARED_FILES; then
-        critical "Failed to add environment '$ENV' to JSON configuration"
+    if ! addJsonEnvironment "$CONFIG_FILE" "$SANITIZED_ENV" "$USER" "$DOMAIN" "$SERVICE_ROOT" "$DESCRIPTION" "$TEAMS_WEBHOOK_URL" "$COPS_INTEGRATION" SHARED_DIRECTORIES SHARED_FILES; then
+        critical "Failed to add environment '$SANITIZED_ENV' to JSON configuration"
         exit 1
     fi
 
-    info "Environment '$ENV' added to JSON deployment configuration"
+    info "Environment '$SANITIZED_ENV' added to JSON deployment configuration"
 }
 
 function dockerCompose() {
@@ -639,6 +660,11 @@ function _init() {
 
     local PROJECT_NAME
     PROJECT_NAME=$(input -n -l "Project name")
+
+    # Sanitize project name for safe usage
+    local SANITIZED_PROJECT_NAME
+    SANITIZED_PROJECT_NAME=$(sanitizeName "$PROJECT_NAME")
+
     local PHP_VERSION
     PHP_VERSION=$(select_php_version)
     local DB_HOST_PORT=""
@@ -658,13 +684,13 @@ function _init() {
     fi
 
     cat << EOF | tee "$PROJECT_DIR/.env" 1>/dev/null
-BASE_DOMAIN=${PROJECT_NAME}.lvh.me
+BASE_DOMAIN=${SANITIZED_PROJECT_NAME}.lvh.me
 ENVIRONMENT=development
 DB_HOST_PORT=${DB_HOST_PORT}
 PHP_VERSION=${PHP_VERSION}
-PROJECTNAME=${PROJECT_NAME}
+PROJECTNAME=${SANITIZED_PROJECT_NAME}
 XDEBUG_IP=host.docker.internal
-IDE_KEY=${PROJECT_NAME}.lvh.me
+IDE_KEY=${SANITIZED_PROJECT_NAME}.lvh.me
 EOF
 
     local CHECKOUT_PROJECT
