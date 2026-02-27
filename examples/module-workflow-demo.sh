@@ -52,9 +52,10 @@ echo "✅ Created example vendor modules with Git repositories"
 echo
 
 # Show the new help documentation
-echo "📖 New help documentation showing module support:"
-echo "================================================"
-docker control help | grep -A 10 "Module Operations"
+echo "📖 Help documentation showing module support in release/merge commands:"
+echo "================================================================"
+docker control release --help | grep -A 5 "Arguments:"
+docker control merge --help | grep -A 5 "Arguments:"
 echo
 
 # Demonstrate module validation

@@ -14,41 +14,31 @@ curl -sL https://raw.githubusercontent.com/INTERLIGENT-kommunzieren-GmbH/docker-
 
 This will install the plugin into `~/.docker/cli-plugins`, making it accessible with the `docker control` command.
 
-## Testing
+## Development and Testing
 
-This project includes a comprehensive test suite to ensure code quality and reliability. The test suite covers:
-
-- **Unit Tests**: Individual function testing with mocking
-- **Integration Tests**: End-to-end workflow testing
-- **Static Analysis**: ShellCheck for code quality
-- **Continuous Integration**: Automated testing on GitHub Actions
-
-### Quick Start
+This project is implemented in Rust. To build the plugin from source:
 
 ```bash
-# Run all tests
-./test/run-tests.sh
-
-# Run only unit tests
-./test/run-tests.sh --unit-only
-
-# Run with verbose output
-./test/run-tests.sh --verbose
+cargo build --release
 ```
 
-### Dependencies
-
-Install test dependencies:
+To run the unit tests:
 
 ```bash
-# Using Homebrew (recommended)
-brew install bats-core jq shellcheck
-
-# Using make (auto-detects package manager)
-make install-deps
+cargo test
 ```
 
-For detailed testing documentation, see [test/README.md](test/README.md).
+### Installation
+
+To install the native binary locally:
+
+```bash
+cargo build --release
+cp target/release/docker-control ~/.docker/cli-plugins/docker-control
+chmod +x ~/.docker/cli-plugins/docker-control
+```
+
+Alternatively, you can use the `install.sh` script to download and install the latest release.
 
 ## Usage
 
@@ -249,17 +239,8 @@ Example of a custom command script:
 #!/bin/bash
 set -e
 
-. "$LIB_DIR/util-functions.sh"
-
-if [[ "$1" == "_desc_" ]]; then
-    # output command description
-    echo "My custom command description"
-
-    exit 0
-fi
-
 # Your command implementation here
-info "Custom command executed"
+echo "Custom command executed"
 
 exit 0
 ```
