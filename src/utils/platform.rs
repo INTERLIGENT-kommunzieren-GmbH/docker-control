@@ -24,7 +24,7 @@ pub fn detect_platform() -> PlatformInfo {
         ui::debug("Detected macOS platform");
         return PlatformInfo {
             platform: Platform::Macos,
-            bind_ip: "localhost".to_string(),
+            bind_ip: "127.0.0.1".to_string(),
         };
     }
 
@@ -37,7 +37,7 @@ pub fn detect_platform() -> PlatformInfo {
                 ui::debug("Detected WSL platform");
                 return PlatformInfo {
                     platform: Platform::Wsl,
-                    bind_ip: "localhost".to_string(),
+                    bind_ip: "127.0.0.1".to_string(),
                 };
             }
         }
@@ -52,7 +52,7 @@ pub fn detect_platform() -> PlatformInfo {
                 ui::debug("Detected Docker Desktop platform");
                 return PlatformInfo {
                     platform: Platform::DockerDesktop,
-                    bind_ip: "localhost".to_string(),
+                    bind_ip: "127.0.0.1".to_string(),
                 };
             }
         }
@@ -83,14 +83,14 @@ pub fn detect_platform() -> PlatformInfo {
             {
                 return PlatformInfo {
                     platform: Platform::DockerDesktop,
-                    bind_ip: "localhost".to_string(),
+                    bind_ip: "127.0.0.1".to_string(),
                 };
             }
         }
 
         return PlatformInfo {
             platform: Platform::Windows,
-            bind_ip: "localhost".to_string(),
+            bind_ip: "127.0.0.1".to_string(),
         };
     }
 
