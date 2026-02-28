@@ -548,20 +548,15 @@ fn execute_hook(
     ui::info(format!("Executing hook: {}...", hook_name));
 
     let args_str = args.join(" ");
+    let hook_path_str = hook_path.display();
     let cmd = format!(
-        ". {} && if [[ $(type -t {}_{}) == \"function\" ]]; then {}_{} {}; fi",
-        hook_path.display(),
-        hook_name,
-        sanitized_env,
-        hook_name,
-        sanitized_env,
-        args_str
+        ". {hook_path_str} && if [[ $(type -t {hook_name}_{sanitized_env}) == \"function\" ]]; then {hook_name}_{sanitized_env} \"{args_str}\" ; fi",
     );
 
     let status = Command::new("bash").arg("-c").arg(cmd).status()?;
 
     if !status.success() {
-        ui::warning(format!("Hook {} failed", hook_name));
+        ui::warning(format!("Hook {hook_name} failed"));
     }
 
     Ok(())
@@ -576,7 +571,7 @@ async fn send_teams_notification(
     changelog: &str,
 ) -> Result<()> {
     let client = reqwest::Client::new();
-    let title = format!("Deployment {} - {} [{}]", status, project_name, env_name);
+    let title = format!("Deployment {status} - {project_name} [{env_name}]");
     let color = match status {
         "started" => "0078D4",
         "success" => "00FF00",
