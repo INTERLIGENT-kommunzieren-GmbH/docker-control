@@ -162,23 +162,10 @@ fn restart_php_containers() -> Result<()> {
             // docker compose --project-directory "$project_dir" down --quiet
             // docker compose --project-directory "$project_dir" up -d --quiet
             let _ = Command::new("docker")
-                .args([
-                    "compose",
-                    "--project-directory",
-                    &project,
-                    "down",
-                    "--quiet",
-                ])
+                .args(["compose", "--project-directory", &project, "down"])
                 .status();
             let _ = Command::new("docker")
-                .args([
-                    "compose",
-                    "--project-directory",
-                    &project,
-                    "up",
-                    "-d",
-                    "--quiet",
-                ])
+                .args(["compose", "--project-directory", &project, "up", "-d"])
                 .status();
         }
     }

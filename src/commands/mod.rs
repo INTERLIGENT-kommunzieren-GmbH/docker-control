@@ -1,5 +1,6 @@
 pub mod add_deploy_config;
 pub mod create_script;
+pub mod custom;
 pub mod deploy;
 pub mod init;
 pub mod install_plugin;

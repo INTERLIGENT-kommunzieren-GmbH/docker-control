@@ -48,7 +48,7 @@ pub fn get_summary(project_dir: &Path) -> String {
             if let Ok(repo) = git2::Repository::open(&git_path) {
                 if let Ok(statuses) = repo.statuses(None) {
                     if !statuses.is_empty() {
-                        git_info.push_str("*");
+                        git_info.push('*');
                     }
                 }
             }
@@ -66,14 +66,7 @@ pub fn get_summary(project_dir: &Path) -> String {
         project_dir.display()
     );
     let output = Command::new("docker")
-        .args([
-            "ps",
-            "-a",
-            "--filter",
-            &filter,
-            "--format",
-            "{{.Status}}",
-        ])
+        .args(["ps", "-a", "--filter", &filter, "--format", "{{.Status}}"])
         .output();
 
     match output {
@@ -147,7 +140,10 @@ fn show_docker_status(project_dir: &Path) {
         "label=com.interligent.dockerplugin.dir={}",
         project_dir.display()
     );
-    ui::debug(format!("Querying docker containers with filter: {}", filter));
+    ui::debug(format!(
+        "Querying docker containers with filter: {}",
+        filter
+    ));
 
     let output = Command::new("docker")
         .args([

@@ -31,12 +31,17 @@ pub fn execute(project_dir: &Path, name: &str) -> Result<()> {
         r#"#!/bin/bash
 set -e
 
-# Your command implementation here
-echo "Executing custom command: {}"
+if [[ "\$1" == "_desc_" ]]; then
+    # output command description
+    echo "{name} - EMPTY DESCRIPTION"
+
+    exit 0
+fi
+
+echo "{name} - WAITING FOR IMPLEMENTATION"
 
 exit 0
-"#,
-        name
+"#
     );
 
     fs::write(&script_path, content)?;

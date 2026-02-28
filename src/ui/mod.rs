@@ -1,4 +1,4 @@
-use console::{style, StyledObject};
+use console::{StyledObject, style};
 use std::sync::atomic::{AtomicBool, Ordering};
 
 static DEBUG: AtomicBool = AtomicBool::new(false);
@@ -41,4 +41,8 @@ pub fn bold<S: Into<String>>(msg: S) -> StyledObject<String> {
 #[allow(dead_code)]
 pub fn cyan<S: Into<String>>(msg: S) -> StyledObject<String> {
     style(msg.into()).cyan()
+}
+
+pub fn yellow<S: Into<String>>(msg: S) -> StyledObject<String> {
+    style(msg.into()).yellow()
 }

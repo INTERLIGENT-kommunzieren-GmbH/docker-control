@@ -1,6 +1,7 @@
 #![allow(clippy::collapsible_if)]
 
-use clap::{Parser, Subcommand};
+use clap::builder::styling::{AnsiColor, Effects, Styles};
+use clap::{CommandFactory, FromArgMatches, Parser, Subcommand};
 use std::path::PathBuf;
 
 mod assets;
@@ -102,11 +103,23 @@ enum Commands {
     External(Vec<String>),
 }
 
+fn get_help_styles() -> Styles {
+    Styles::styled()
+        .header(AnsiColor::Yellow.on_default() | Effects::BOLD)
+        .usage(AnsiColor::Yellow.on_default() | Effects::BOLD)
+        .literal(AnsiColor::Cyan.on_default() | Effects::BOLD)
+        .placeholder(AnsiColor::Cyan.on_default())
+}
+
 #[tokio::main]
 async fn main() {
+    let mut cmd = Cli::command().styles(get_help_styles());
+
     // Check for help flags early to show status in help
     let args: Vec<String> = std::env::args().collect();
-    let is_help = args.iter().any(|arg| arg == "--help" || arg == "-h" || arg == "help");
+    let is_help = args
+        .iter()
+        .any(|arg| arg == "--help" || arg == "-h" || arg == "help");
 
     if is_help {
         // Manually parse dir for status summary in help
@@ -117,12 +130,34 @@ async fn main() {
                 break;
             }
         }
+
         let summary = commands::status::get_summary(&project_dir);
-        println!("{}", ui::cyan(format!("Project Status: {}", summary)));
-        println!();
+        let status_line = format!("{}: {}", ui::yellow("Project Status"), ui::cyan(summary));
+        println!("{}\n", status_line);
+
+        let custom_commands = commands::custom::get_custom_commands(&project_dir);
+        let mut custom_help = String::new();
+        if !custom_commands.is_empty() {
+            custom_help.push_str(&format!("\n\n{}\n", ui::yellow("Custom Commands:")));
+            for cmd in custom_commands {
+                custom_help.push_str(&format!(
+                    "  {:22} {}\n",
+                    ui::cyan(&cmd.name),
+                    cmd.description
+                ));
+            }
+        }
+
+        cmd = cmd.help_template(format!(
+            "{{before-help}}{{name}} {{version}}\n{{about-with-newline}}\n{{usage-heading}} {{usage}}\n\n{}\n{{subcommands}}{}\n{}\n{{options}}",
+            ui::yellow("Commands:"),
+            custom_help,
+            ui::yellow("Options:")
+        ));
     }
 
-    let cli = Cli::parse();
+    let matches = cmd.get_matches();
+    let cli = Cli::from_arg_matches(&matches).unwrap_or_else(|e| e.exit());
 
     if cli.debug {
         ui::set_debug(true);
@@ -173,10 +208,7 @@ async fn main() {
         ),
     };
 
-    ui::debug(format!(
-        "Setting SSH_AUTH_PORT to {}:2222",
-        ssh_auth_host
-    ));
+    ui::debug(format!("Setting SSH_AUTH_PORT to {}:2222", ssh_auth_host));
     ui::debug(format!(
         "Setting DOCKER_HOST to tcp://{}:2375",
         docker_host_ip
