@@ -198,15 +198,10 @@ async fn main() {
     }
 
     // Set environment variables for child processes (docker compose, etc.)
-    let (ssh_auth_host, docker_host_ip) = match platform_info.platform {
-        utils::platform::Platform::NativeLinux(_) if platform_info.bind_ip != "localhost" => {
-            (platform_info.bind_ip.clone(), platform_info.bind_ip.clone())
-        }
-        _ => (
-            "host.docker.internal".to_string(),
-            "host.docker.internal".to_string(),
-        ),
-    };
+    // We use the bind_ip for host-side DOCKER_HOST as it's where socat is listening.
+    // Native host resolution for host.docker.internal may not be available.
+    let (ssh_auth_host, docker_host_ip) =
+        (platform_info.bind_ip.clone(), platform_info.bind_ip.clone());
 
     ui::debug(format!("Setting SSH_AUTH_PORT to {}:2222", ssh_auth_host));
     ui::debug(format!(
