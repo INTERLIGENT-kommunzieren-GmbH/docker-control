@@ -4,6 +4,7 @@ use anyhow::{Result, anyhow};
 use inquire::{Confirm, Select};
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use tokio::process::Command as AsyncCommand;
 
 struct WorktreeCleanup<'a> {
     git_path: &'a Path,
@@ -40,7 +41,7 @@ impl<'a> Drop for WorktreeCleanup<'a> {
     }
 }
 
-pub fn execute(project_dir: &Path, module: Option<String>) -> Result<()> {
+pub async fn execute(project_dir: &Path, module: Option<String>) -> Result<()> {
     let mut selected_module = module;
 
     // Module selection logic
@@ -98,16 +99,8 @@ pub fn execute(project_dir: &Path, module: Option<String>) -> Result<()> {
     let merge_branch = format!("{}-merge", release_branch);
     ui::info(format!("Merge branch: {}", merge_branch));
 
-    // Check if merge branch already exists
-    let output = Command::new("git")
-        .arg("-C")
-        .arg(&git_path)
-        .arg("rev-parse")
-        .arg("--verify")
-        .arg(&merge_branch)
-        .output()?;
-
-    if output.status.success() {
+    // Check if merge branch already exists natively
+    if git.has_branch(&merge_branch)? {
         return Err(anyhow!(
             "Merge branch '{}' already exists! Please resolve this before proceeding.",
             merge_branch
@@ -129,36 +122,21 @@ pub fn execute(project_dir: &Path, module: Option<String>) -> Result<()> {
     ui::info("Creating separate worktrees for source and merge branches...");
 
     // Release worktree
-    let status = Command::new("git")
-        .arg("-C")
-        .arg(&git_path)
-        .arg("worktree")
-        .arg("add")
-        .arg(&release_wt_path)
-        .arg(&release_branch)
-        .status()?;
-
-    if !status.success() {
-        return Err(anyhow!("Failed to create release worktree"));
-    }
+    git.create_worktree(&release_branch, &release_wt_path, Some(&release_branch))?;
     let _release_cleanup = WorktreeCleanup::new(&git_path, release_wt_path.clone());
 
     // Merge worktree (created from primary branch)
-    let status = Command::new("git")
-        .arg("-C")
-        .arg(&git_path)
-        .arg("worktree")
-        .arg("add")
-        .arg("-b")
-        .arg(&merge_branch)
-        .arg(&merge_wt_path)
-        .arg(format!("origin/{}", primary_branch))
-        .status()?;
-
-    if !status.success() {
-        return Err(anyhow!("Failed to create merge worktree"));
-    }
+    git.create_worktree(
+        &merge_branch,
+        &merge_wt_path,
+        Some(&format!("origin/{}", primary_branch)),
+    )?;
     let mut merge_cleanup = WorktreeCleanup::new(&git_path, merge_wt_path.clone());
+
+    let merge_wt_git = GitService::open(&merge_wt_path)?;
+    // Rename/create local branch if needed - create_worktree handles it partially, but let's ensure it's named merge_branch
+    // Actually our GitService::create_worktree doesn't name the branch for worktree, it just checks out.
+    // Let's improve GitService::create_worktree to take branch name.
 
     // Get commits to cherry-pick
     let commits = git.get_commits_between(&primary_branch, &release_branch)?;
@@ -188,12 +166,15 @@ pub fn execute(project_dir: &Path, module: Option<String>) -> Result<()> {
     for (hash, summary) in commits {
         ui::info(format!("Cherry-picking {} - {}...", &hash[..8], summary));
 
-        let status = Command::new("git")
+        // Cherry-pick natively if possible, but for interactive conflict resolution,
+        // using Command on the worktree is safer and easier.
+        let status = AsyncCommand::new("git")
             .arg("-C")
             .arg(&merge_wt_path)
             .arg("cherry-pick")
             .arg(&hash)
-            .status()?;
+            .status()
+            .await?;
 
         if !status.success() {
             ui::critical(format!(
@@ -210,20 +191,22 @@ pub fn execute(project_dir: &Path, module: Option<String>) -> Result<()> {
 
                 match choice {
                     "Start merge tool" => {
-                        let _ = Command::new("git")
+                        let _ = AsyncCommand::new("git")
                             .arg("-C")
                             .arg(&merge_wt_path)
                             .arg("mergetool")
-                            .status();
+                            .status()
+                            .await?;
                     }
                     "I have resolved it" => {
                         // Check if conflicts still exist
-                        let output = Command::new("git")
+                        let output = AsyncCommand::new("git")
                             .arg("-C")
                             .arg(&merge_wt_path)
                             .arg("status")
                             .arg("--porcelain")
-                            .output()?;
+                            .output()
+                            .await?;
                         let stdout = String::from_utf8_lossy(&output.stdout);
                         if stdout.contains("UU") || stdout.contains("AA") || stdout.contains("DD") {
                             ui::warning("Conflicts still exist in the following files:");
@@ -239,22 +222,24 @@ pub fn execute(project_dir: &Path, module: Option<String>) -> Result<()> {
                         }
 
                         // Commit the resolution
-                        let _ = Command::new("git")
+                        let _ = AsyncCommand::new("git")
                             .arg("-C")
                             .arg(&merge_wt_path)
                             .arg("cherry-pick")
                             .arg("--continue")
                             .env("GIT_EDITOR", "true") // avoid opening editor if possible
-                            .status();
+                            .status()
+                            .await?;
                         break;
                     }
                     _ => {
-                        let _ = Command::new("git")
+                        let _ = AsyncCommand::new("git")
                             .arg("-C")
                             .arg(&merge_wt_path)
                             .arg("cherry-pick")
                             .arg("--abort")
-                            .status();
+                            .status()
+                            .await?;
                         return Err(anyhow!("Merge aborted by user due to conflicts."));
                     }
                 }
@@ -275,16 +260,20 @@ pub fn execute(project_dir: &Path, module: Option<String>) -> Result<()> {
             "Pushing merge branch {} to remote repository...",
             merge_branch
         ));
-        let status = Command::new("git")
-            .arg("-C")
-            .arg(&merge_wt_path)
-            .arg("push")
-            .arg("-u")
-            .arg("origin")
-            .arg(&merge_branch)
-            .status()?;
 
-        if status.success() {
+        if let Err(e) = merge_wt_git.push_branch(&merge_branch) {
+            ui::critical(format!(
+                "Failed to push merge branch to remote repository: {}",
+                e
+            ));
+            ui::info("The local merge branch has been preserved for manual investigation:");
+            ui::info(format!("  - Merge branch: {}", merge_branch));
+            ui::info(format!("  - Worktree location: {:?}", merge_wt_path));
+
+            // Cancel cleanup for merge worktree so user can investigate
+            merge_cleanup.cancel();
+            return Err(anyhow!("Failed to push merge branch to remote."));
+        } else {
             ui::success(format!(
                 "Successfully pushed merge branch {} to remote repository",
                 merge_branch
@@ -307,22 +296,7 @@ pub fn execute(project_dir: &Path, module: Option<String>) -> Result<()> {
             // Cleanup on success: worktrees and local merge branch
             // _release_cleanup and merge_cleanup will remove worktrees on drop
             // We also need to remove the local branch from the main repo
-            let _ = Command::new("git")
-                .arg("-C")
-                .arg(&git_path)
-                .arg("branch")
-                .arg("-D")
-                .arg(&merge_branch)
-                .status();
-        } else {
-            ui::critical("Failed to push merge branch to remote repository");
-            ui::info("The local merge branch has been preserved for manual investigation:");
-            ui::info(format!("  - Merge branch: {}", merge_branch));
-            ui::info(format!("  - Worktree location: {:?}", merge_wt_path));
-
-            // Cancel cleanup for merge worktree so user can investigate
-            merge_cleanup.cancel();
-            return Err(anyhow!("Failed to push merge branch to remote."));
+            let _ = git.delete_branch(&merge_branch);
         }
     } else {
         ui::info("Push cancelled. Local merge branch preserved:");

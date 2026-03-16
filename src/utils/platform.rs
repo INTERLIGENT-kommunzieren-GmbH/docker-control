@@ -101,40 +101,13 @@ pub fn detect_platform() -> PlatformInfo {
 }
 
 fn get_docker0_ip() -> Option<String> {
-    // Try 'ip addr show docker0'
-    if let Ok(output) = Command::new("ip")
-        .args(["addr", "show", "docker0"])
-        .output()
-    {
-        let stdout = String::from_utf8_lossy(&output.stdout);
-        for line in stdout.lines() {
-            if line.trim().starts_with("inet ") {
-                let parts: Vec<&str> = line.split_whitespace().collect();
-                if parts.len() > 1 {
-                    // parts[1] is like 172.17.0.1/16
-                    if let Some(ip) = parts[1].split('/').next() {
-                        if ip != "127.0.0.1" {
-                            return Some(ip.to_string());
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    // Try 'ifconfig docker0' as fallback
-    if let Ok(output) = Command::new("ifconfig").arg("docker0").output() {
-        let stdout = String::from_utf8_lossy(&output.stdout);
-        for line in stdout.lines() {
-            if line.contains("inet ") {
-                let parts: Vec<&str> = line.split_whitespace().collect();
-                // ifconfig output varies, but usually 'inet' is followed by the IP
-                for (i, part) in parts.iter().enumerate() {
-                    if *part == "inet" && i + 1 < parts.len() {
-                        let ip = parts[i + 1];
-                        if ip != "127.0.0.1" {
-                            return Some(ip.to_string());
-                        }
+    if let Ok(interfaces) = get_if_addrs::get_if_addrs() {
+        for interface in interfaces {
+            if interface.name == "docker0" {
+                if let get_if_addrs::IfAddr::V4(addr) = interface.addr {
+                    let ip = addr.ip.to_string();
+                    if ip != "127.0.0.1" {
+                        return Some(ip);
                     }
                 }
             }

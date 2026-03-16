@@ -6,6 +6,7 @@ use serde_json::Value;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use tokio::process::Command as AsyncCommand;
 
 struct WorktreeCleanup<'a> {
     git_path: &'a Path,
@@ -43,7 +44,7 @@ impl<'a> Drop for WorktreeCleanup<'a> {
     }
 }
 
-pub fn execute(project_dir: &Path, module: Option<String>) -> Result<()> {
+pub async fn execute(project_dir: &Path, module: Option<String>) -> Result<()> {
     let mut selected_module = module;
 
     // Module selection logic
@@ -126,7 +127,8 @@ pub fn execute(project_dir: &Path, module: Option<String>) -> Result<()> {
             &branch,
             &release,
             selected_module.as_deref(),
-        )?;
+        )
+        .await?;
     } else {
         // For initial, major, minor, we create a new branch
         create_release_branch(
@@ -136,7 +138,8 @@ pub fn execute(project_dir: &Path, module: Option<String>) -> Result<()> {
             &release,
             &primary_branch,
             selected_module.as_deref(),
-        )?;
+        )
+        .await?;
     }
 
     ui::success("=== Release Creation Complete ===".to_string());
@@ -148,7 +151,7 @@ pub fn execute(project_dir: &Path, module: Option<String>) -> Result<()> {
     Ok(())
 }
 
-fn create_release_branch(
+async fn create_release_branch(
     project_dir: &Path,
     git_path: &Path,
     git: &GitService,
@@ -168,87 +171,51 @@ fn create_release_branch(
         "Creating release branch {} in worktree...",
         version
     ));
-    let status = Command::new("git")
-        .arg("-C")
-        .arg(git_path)
-        .arg("worktree")
-        .arg("add")
-        .arg("-b")
-        .arg(version)
-        .arg(&worktree_dir)
-        .arg(primary_branch)
-        .status()?;
 
-    if !status.success() {
-        return Err(anyhow!("Failed to create release worktree"));
-    }
+    // Create worktree natively if possible, or use Command if GitService doesn't support it yet
+    // GitService doesn't have worktree support yet, but we can add it or keep Command for now.
+    // Given the requirement to replace external dependencies where possible, I should check if git2 supports worktrees.
+    // git2 does support worktrees.
+    git.create_worktree(version, &worktree_dir, Some(primary_branch))?;
+
     let _cleanup = WorktreeCleanup::new(git_path, worktree_dir.clone());
 
     // Update composer.json version
     update_composer_version(&worktree_dir, version)?;
 
     // Commit composer.json update
-    let status = Command::new("git")
-        .arg("-C")
-        .arg(&worktree_dir)
-        .arg("add")
-        .arg("composer.json")
-        .status()?;
-    if status.success() {
-        let _ = Command::new("git")
-            .arg("-C")
-            .arg(&worktree_dir)
-            .arg("commit")
-            .arg("-m")
-            .arg(format!(
-                "release: Updated version in composer.json for {}",
-                version
-            ))
-            .status();
+    let worktree_git = GitService::open(&worktree_dir)?;
+    if let Err(e) = worktree_git.add_file(Path::new("composer.json")) {
+        ui::warning(format!("Failed to add composer.json: {}", e));
+    } else if let Err(e) = worktree_git.commit(&format!(
+        "release: Updated version in composer.json for {}",
+        version
+    )) {
+        ui::warning(format!("Failed to commit composer.json: {}", e));
     }
 
     // Create composer.lock via Docker
-    execute_composer_install(project_dir, &worktree_dir)?;
+    execute_composer_install(project_dir, &worktree_dir).await?;
 
     // Commit composer.lock
-    let status = Command::new("git")
-        .arg("-C")
-        .arg(&worktree_dir)
-        .arg("add")
-        .arg("composer.lock")
-        .status()?;
-    if status.success() {
-        let _ = Command::new("git")
-            .arg("-C")
-            .arg(&worktree_dir)
-            .arg("commit")
-            .arg("-m")
-            .arg(format!("release: Add composer.lock for {}", version))
-            .status();
+    if let Err(e) = worktree_git.add_file(Path::new("composer.lock")) {
+        ui::warning(format!("Failed to add composer.lock: {}", e));
+    } else if let Err(e) = worktree_git.commit(&format!("release: Add composer.lock for {}", version))
+    {
+        ui::warning(format!("Failed to commit composer.lock: {}", e));
     }
 
     // Generate changelog
-    generate_changelog(git, &worktree_dir, version, primary_branch, true)?;
+    generate_changelog(git, &worktree_dir, version, primary_branch, true).await?;
 
     // Push branch
     ui::info(format!("Pushing release branch {} to origin...", version));
-    let status = Command::new("git")
-        .arg("-C")
-        .arg(&worktree_dir)
-        .arg("push")
-        .arg("-u")
-        .arg("origin")
-        .arg(version)
-        .status()?;
-
-    if !status.success() {
-        return Err(anyhow!("Failed to push release branch to origin"));
-    }
+    worktree_git.push_branch(version)?;
 
     Ok(())
 }
 
-fn create_patch_tag(
+async fn create_patch_tag(
     project_dir: &Path,
     git_path: &Path,
     git: &GitService,
@@ -271,77 +238,41 @@ fn create_patch_tag(
 
     // Check if worktree already exists, if not create it
     if !worktree_dir.exists() {
-        let status = Command::new("git")
-            .arg("-C")
-            .arg(git_path)
-            .arg("worktree")
-            .arg("add")
-            .arg(&worktree_dir)
-            .arg(branch)
-            .status()?;
-        if !status.success() {
-            return Err(anyhow!("Failed to create worktree for branch {}", branch));
-        }
+        git.create_worktree(branch, &worktree_dir, Some(branch))?;
     }
     let _cleanup = WorktreeCleanup::new(git_path, worktree_dir.clone());
 
+    let worktree_git = GitService::open(&worktree_dir)?;
+
     // Sync with origin
-    let _ = Command::new("git")
-        .arg("-C")
-        .arg(&worktree_dir)
-        .arg("pull")
-        .arg("origin")
-        .arg(branch)
-        .status();
+    ui::info(format!("Pulling latest changes for branch {}...", branch));
+    worktree_git.pull(branch)?;
 
     // Update composer.json version
     update_composer_version(&worktree_dir, tag)?;
 
     // Commit composer.json update
-    let _ = Command::new("git")
-        .arg("-C")
-        .arg(&worktree_dir)
-        .arg("add")
-        .arg("composer.json")
-        .status();
-    let _ = Command::new("git")
-        .arg("-C")
-        .arg(&worktree_dir)
-        .arg("commit")
-        .arg("-m")
-        .arg(format!(
-            "release: Updated version in composer.json for {}",
-            tag
-        ))
-        .status();
+    if let Err(e) = worktree_git.add_file(Path::new("composer.json")) {
+        ui::warning(format!("Failed to add composer.json: {}", e));
+    } else if let Err(e) = worktree_git.commit(&format!(
+        "release: Updated version in composer.json for {}",
+        tag
+    )) {
+        ui::warning(format!("Failed to commit composer.json: {}", e));
+    }
 
     // Generate changelog
-    generate_changelog(git, &worktree_dir, tag, branch, false)?;
+    generate_changelog(git, &worktree_dir, tag, branch, false).await?;
 
     // Create tag
     ui::info(format!("Creating tag {}...", tag));
-    let status = Command::new("git")
-        .arg("-C")
-        .arg(&worktree_dir)
-        .arg("tag")
-        .arg(tag)
-        .status()?;
-    if !status.success() {
-        return Err(anyhow!("Failed to create tag {}", tag));
+    if let Err(e) = worktree_git.create_tag_on_head(tag, &format!("Release {}", tag)) {
+        return Err(anyhow!("Failed to create tag {}: {}", tag, e));
     }
 
     // Push tag
     ui::info(format!("Pushing tag {} to origin...", tag));
-    let status = Command::new("git")
-        .arg("-C")
-        .arg(git_path)
-        .arg("push")
-        .arg("origin")
-        .arg(tag)
-        .status()?;
-    if !status.success() {
-        return Err(anyhow!("Failed to push tag {} to origin", tag));
-    }
+    worktree_git.push_tag(tag)?;
 
     Ok(())
 }
@@ -368,7 +299,7 @@ fn update_composer_version(worktree_dir: &Path, version: &str) -> Result<()> {
     Ok(())
 }
 
-fn execute_composer_install(project_dir: &Path, worktree_dir: &Path) -> Result<()> {
+async fn execute_composer_install(project_dir: &Path, worktree_dir: &Path) -> Result<()> {
     if !worktree_dir.join("composer.json").exists() {
         return Ok(());
     }
@@ -386,7 +317,7 @@ fn execute_composer_install(project_dir: &Path, worktree_dir: &Path) -> Result<(
     let ssh_auth_sock =
         std::env::var("SSH_AUTH_SOCK").unwrap_or_else(|_| "/tmp/ssh-agent.sock".to_string());
 
-    let status = Command::new("docker")
+    let status = AsyncCommand::new("docker")
         .arg("run")
         .arg("--rm")
         .arg("-u")
@@ -403,7 +334,8 @@ fn execute_composer_install(project_dir: &Path, worktree_dir: &Path) -> Result<(
         .arg("bash")
         .arg("-c")
         .arg("composer i -o")
-        .status()?;
+        .status()
+        .await?;
 
     if !status.success() {
         return Err(anyhow!("Composer install failed"));
@@ -415,7 +347,7 @@ fn execute_composer_install(project_dir: &Path, worktree_dir: &Path) -> Result<(
     Ok(())
 }
 
-fn generate_changelog(
+async fn generate_changelog(
     git: &GitService,
     worktree_dir: &Path,
     version: &str,
@@ -485,22 +417,15 @@ fn generate_changelog(
 
     // Open for editing
     let editor = std::env::var("EDITOR").unwrap_or_else(|_| "nano".to_string());
-    let _ = Command::new(editor).arg(&changelog_path).status();
+    let _ = AsyncCommand::new(editor).arg(&changelog_path).status().await;
 
     // Commit changelog
-    let _ = Command::new("git")
-        .arg("-C")
-        .arg(worktree_dir)
-        .arg("add")
-        .arg("CHANGELOG.md")
-        .status();
-    let _ = Command::new("git")
-        .arg("-C")
-        .arg(worktree_dir)
-        .arg("commit")
-        .arg("-m")
-        .arg("release: update changelog")
-        .status();
+    let worktree_git = GitService::open(worktree_dir)?;
+    if let Err(e) = worktree_git.add_file(Path::new("CHANGELOG.md")) {
+        ui::warning(format!("Failed to add CHANGELOG.md: {}", e));
+    } else if let Err(e) = worktree_git.commit("release: update changelog") {
+        ui::warning(format!("Failed to commit changelog: {}", e));
+    }
 
     Ok(())
 }

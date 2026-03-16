@@ -2,7 +2,7 @@ use crate::config::{DeployConfig, Environment};
 use crate::git::GitService;
 use crate::ssh;
 use crate::ui;
-use anyhow::{Result, anyhow};
+use anyhow::{Context, Result, anyhow};
 use inquire::{Confirm, Select};
 use std::fs;
 use std::path::Path;
@@ -22,11 +22,9 @@ pub async fn execute(project_dir: &Path, env_name: String) -> Result<()> {
 
     ui::info("Fetching available releases...");
     // Fetch tags to ensure we have the latest
-    let _ = Command::new("git")
-        .arg("-C")
-        .arg(&git_path)
-        .args(["fetch", "--tags"])
-        .status();
+    if let Err(e) = git.fetch_tags() {
+        ui::warning(format!("Git fetch tags failed: {}. Continuing anyway.", e));
+    }
 
     let tags = git.list_tags()?;
     if tags.is_empty() {
@@ -78,7 +76,7 @@ pub async fn execute(project_dir: &Path, env_name: String) -> Result<()> {
     }
     let archive_path = deployments_dir.join(&archive_name);
 
-    if let Err(e) = create_deployment_archive(project_dir, &release, &archive_path) {
+    if let Err(e) = create_deployment_archive(project_dir, &release, &archive_path).await {
         if let Some(webhook) = &env.teams_webhook_url {
             let _ = send_teams_notification(
                 webhook,
@@ -163,7 +161,11 @@ fn get_env_var(project_dir: &Path, key: &str) -> Option<String> {
     None
 }
 
-fn create_deployment_archive(project_dir: &Path, release: &str, archive_path: &Path) -> Result<()> {
+async fn create_deployment_archive(
+    project_dir: &Path,
+    release: &str,
+    archive_path: &Path,
+) -> Result<()> {
     ui::info(format!("Creating deployment archive for {}...", release));
 
     let deployments_dir = project_dir.join("deployments");
@@ -173,34 +175,20 @@ fn create_deployment_archive(project_dir: &Path, release: &str, archive_path: &P
     }
     fs::create_dir_all(&temp_extract_dir)?;
 
-    // git archive --format=tar <release> | tar -x -C <temp_dir>
-    let output = Command::new("git")
-        .arg("-C")
-        .arg(project_dir.join("htdocs"))
-        .arg("archive")
-        .arg("--format=tar")
-        .arg(release)
-        .output()?;
+    // Use git2 to extract files instead of git archive | tar
+    let git_path = project_dir.join("htdocs");
+    let repo = git2::Repository::open(&git_path)
+        .context(format!("Failed to open git repository at {:?}", git_path))?;
+    let obj = repo
+        .revparse_single(release)
+        .context(format!("Failed to find release '{}'", release))?;
+    let _ = obj.peel_to_tree()?;
 
-    if !output.status.success() {
-        return Err(anyhow!(
-            "Git archive failed: {}",
-            String::from_utf8_lossy(&output.stderr)
-        ));
-    }
-
-    let mut child = Command::new("tar")
-        .arg("-x")
-        .arg("-C")
-        .arg(&temp_extract_dir)
-        .stdin(std::process::Stdio::piped())
-        .spawn()?;
-
-    if let Some(mut stdin) = child.stdin.take() {
-        use std::io::Write;
-        stdin.write_all(&output.stdout)?;
-    }
-    child.wait()?;
+    let mut checkout = git2::build::CheckoutBuilder::new();
+    checkout.target_dir(&temp_extract_dir);
+    checkout.force();
+    repo.checkout_tree(&obj, Some(&mut checkout))
+        .context("Failed to checkout tree to temp directory")?;
 
     // Run composer install inside a container for parity with bash
     let php_version = get_env_var(project_dir, "PHP_VERSION").unwrap_or_else(|| "8.2".to_string());

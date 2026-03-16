@@ -1,29 +1,54 @@
 use crate::ui;
 use anyhow::Result;
-use std::process::Command;
+use bollard::Docker;
+use bollard::container::ListContainersOptions;
+use std::collections::HashMap;
 
-pub fn execute() -> Result<()> {
+pub async fn execute() -> Result<()> {
     ui::info("PROJECT DIRECTORY");
 
-    let output = Command::new("docker")
-        .arg("ps")
-        .arg("-a")
-        .arg("--filter")
-        .arg("label=com.interligent.dockerplugin.project")
-        .arg("--filter")
-        .arg("label=com.interligent.dockerplugin.dir")
-        .arg("--format")
-        .arg("{{index .Labels \"com.interligent.dockerplugin.project\"}} {{index .Labels \"com.interligent.dockerplugin.dir\"}}")
-        .output()?;
+    let docker = match Docker::connect_with_local_defaults() {
+        Ok(d) => d,
+        Err(_) => return Err(anyhow::anyhow!("Unable to connect to Docker")),
+    };
 
-    if output.status.success() {
-        let content = String::from_utf8_lossy(&output.stdout);
-        let mut lines: Vec<&str> = content.lines().collect();
-        lines.sort();
-        lines.dedup();
-        for line in lines {
-            println!("{}", line);
+    let mut filters = HashMap::new();
+    filters.insert(
+        "label".to_string(),
+        vec!["com.interligent.dockerplugin.project".to_string()],
+    );
+
+    match docker
+        .list_containers(Some(ListContainersOptions {
+            all: true,
+            filters,
+            ..Default::default()
+        }))
+        .await
+    {
+        Ok(containers) => {
+            let mut results = Vec::new();
+            for container in containers {
+                if let Some(labels) = container.labels {
+                    let project = labels
+                        .get("com.interligent.dockerplugin.project")
+                        .cloned()
+                        .unwrap_or_default();
+                    let dir = labels
+                        .get("com.interligent.dockerplugin.dir")
+                        .or_else(|| labels.get("com.docker.compose.project.working_dir"))
+                        .cloned()
+                        .unwrap_or_default();
+                    results.push(format!("{} {}", project, dir));
+                }
+            }
+            results.sort();
+            results.dedup();
+            for res in results {
+                println!("{}", res);
+            }
         }
+        Err(e) => return Err(anyhow::anyhow!("Unable to query containers: {}", e)),
     }
 
     Ok(())

@@ -113,7 +113,14 @@ fn get_help_styles() -> Styles {
 
 #[tokio::main]
 async fn main() {
-    let mut cmd = Cli::command().styles(get_help_styles());
+    let cmd = Cli::command().styles(get_help_styles());
+
+    let matches = cmd.get_matches();
+    let cli = Cli::from_arg_matches(&matches).unwrap_or_else(|e| e.exit());
+
+    if cli.debug {
+        ui::set_debug(true);
+    }
 
     // Check for help flags early to show status in help
     let args: Vec<String> = std::env::args().collect();
@@ -130,8 +137,14 @@ async fn main() {
                 break;
             }
         }
+        
+        let project_dir = if project_dir.exists() {
+            project_dir.canonicalize().unwrap_or(project_dir)
+        } else {
+            project_dir
+        };
 
-        let summary = commands::status::get_summary(&project_dir);
+        let summary = commands::status::get_summary(&project_dir).await;
         let status_line = format!("{}: {}", ui::yellow("Project Status"), ui::cyan(summary));
         println!("{}\n", status_line);
 
@@ -148,24 +161,26 @@ async fn main() {
             }
         }
 
-        cmd = cmd.help_template(format!(
+        let help_template = format!(
             "{{before-help}}{{name}} {{version}}\n{{about-with-newline}}\n{{usage-heading}} {{usage}}\n\n{}\n{{subcommands}}{}\n{}\n{{options}}",
             ui::yellow("Commands:"),
             custom_help,
             ui::yellow("Options:")
-        ));
-    }
-
-    let matches = cmd.get_matches();
-    let cli = Cli::from_arg_matches(&matches).unwrap_or_else(|e| e.exit());
-
-    if cli.debug {
-        ui::set_debug(true);
+        );
+        
+        // Use the factory to get a new command with the template and print help
+        Cli::command()
+            .styles(get_help_styles())
+            .help_template(help_template)
+            .print_help()
+            .unwrap();
+        println!();
+        return;
     }
 
     if let Some(Commands::Metadata) = cli.command {
         let metadata = serde_json::json!({
-            "SchemaVersion": "0.1.0",
+            "SchemaVersion": "2.0.0",
             "Vendor": "INTERLIGENT kommunizieren GmbH",
             "Version": env!("CARGO_PKG_VERSION"),
             "ShortDescription": "IK Docker Control CLI Plugin"
@@ -189,11 +204,19 @@ async fn main() {
         .clone()
         .unwrap_or_else(|| std::env::current_dir().expect("Failed to get current directory"));
 
+    let project_dir = if project_dir.exists() {
+        project_dir
+            .canonicalize()
+            .unwrap_or_else(|_| project_dir.clone())
+    } else {
+        project_dir
+    };
+
     // Platform detection and forwarding
     let platform_info = utils::platform::detect_platform();
     ui::debug(format!("Platform detected: {:?}", platform_info.platform));
 
-    if let Err(e) = utils::forwarding::ensure_forwarding(&platform_info) {
+    if let Err(e) = utils::forwarding::ensure_forwarding(&platform_info).await {
         ui::warning(format!("Forwarding setup failed: {}", e));
     }
 
@@ -218,7 +241,7 @@ async fn main() {
         Some(cmd) => cmd,
         None => {
             // If no command is provided, show status and help summary
-            if let Err(e) = commands::status::execute(&project_dir) {
+            if let Err(e) = commands::status::execute(&project_dir).await {
                 ui::critical(format!("Error showing status: {}", e));
             }
             println!("\nRun 'docker control --help' for a list of available commands.");
@@ -260,7 +283,7 @@ async fn main() {
             }
         }
         Commands::Init => {
-            if let Err(e) = commands::init::execute(&project_dir) {
+            if let Err(e) = commands::init::execute(&project_dir).await {
                 ui::critical(format!("Error: {}", e));
             }
         }
@@ -270,7 +293,7 @@ async fn main() {
             }
         }
         Commands::Merge { module } => {
-            if let Err(e) = commands::merge::execute(&project_dir, module) {
+            if let Err(e) = commands::merge::execute(&project_dir, module).await {
                 ui::critical(format!("Error: {}", e));
             }
         }
@@ -286,7 +309,7 @@ async fn main() {
             }
         }
         Commands::Release { module } => {
-            if let Err(e) = commands::release::execute(&project_dir, module) {
+            if let Err(e) = commands::release::execute(&project_dir, module).await {
                 ui::critical(format!("Error: {}", e));
             }
         }
@@ -308,7 +331,7 @@ async fn main() {
             }
         }
         Commands::ShowRunning => {
-            if let Err(e) = commands::show_running::execute() {
+            if let Err(e) = commands::show_running::execute().await {
                 ui::critical(format!("Error: {}", e));
             }
         }
@@ -324,7 +347,7 @@ async fn main() {
             }
         }
         Commands::Status => {
-            if let Err(e) = commands::status::execute(&project_dir) {
+            if let Err(e) = commands::status::execute(&project_dir).await {
                 ui::critical(format!("Error: {}", e));
             }
             // Also show docker compose ps as it was before

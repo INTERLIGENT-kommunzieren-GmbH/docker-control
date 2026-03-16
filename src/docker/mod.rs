@@ -8,7 +8,8 @@ pub fn execute_compose(project_dir: &Path, args: &[&str]) -> Result<()> {
     cmd.arg("compose")
         .arg("--project-directory")
         .arg(project_dir)
-        .args(args);
+        .args(args)
+        .current_dir(project_dir);
 
     let status = cmd.status().context("Failed to execute docker compose")?;
 
@@ -63,6 +64,7 @@ pub fn console(project_dir: &Path, container: Option<String>) -> Result<()> {
             .arg(project_dir)
             .arg("ps")
             .arg("--services")
+            .current_dir(project_dir)
             .output()?;
 
         if output.status.success() {
@@ -78,7 +80,8 @@ pub fn console(project_dir: &Path, container: Option<String>) -> Result<()> {
     cmd.arg("compose")
         .arg("--project-directory")
         .arg(project_dir)
-        .arg("exec");
+        .arg("exec")
+        .current_dir(project_dir);
 
     if service == "php" {
         cmd.arg("-itu").arg("www-data");

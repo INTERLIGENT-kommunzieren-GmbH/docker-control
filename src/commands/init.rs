@@ -5,7 +5,7 @@ use std::fs;
 use std::net::TcpListener;
 use std::path::{Path, PathBuf};
 
-pub fn execute(project_dir: &Path) -> Result<()> {
+pub async fn execute(project_dir: &Path) -> Result<()> {
     ui::info("Initializing new project...");
 
     if project_dir.exists() && fs::read_dir(project_dir)?.next().is_some() {
@@ -91,15 +91,9 @@ pub fn execute(project_dir: &Path) -> Result<()> {
         let clone_url = Text::new("Clone URL (SSH recommended):").prompt()?;
         ui::info(format!("Cloning {} into htdocs...", clone_url));
 
-        let status = std::process::Command::new("git")
-            .arg("clone")
-            .arg(&clone_url)
-            .arg("htdocs")
-            .current_dir(project_dir)
-            .status()?;
-
-        if !status.success() {
-            ui::critical("Failed to clone repository.");
+        match git2::Repository::clone(&clone_url, project_dir.join("htdocs")) {
+            Ok(_) => ui::success("Repository cloned successfully."),
+            Err(e) => ui::critical(format!("Failed to clone repository: {}", e)),
         }
     }
 

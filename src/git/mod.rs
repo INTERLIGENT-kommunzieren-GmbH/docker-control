@@ -196,6 +196,38 @@ impl GitService {
         Ok(())
     }
 
+    pub fn fetch_tags(&self) -> Result<()> {
+        let mut remote = self.repo.find_remote("origin")?;
+        remote.fetch(&["refs/tags/*:refs/tags/*"], None, None)?;
+        Ok(())
+    }
+
+    pub fn add_file(&self, path: &Path) -> Result<()> {
+        let mut index = self.repo.index()?;
+        index.add_path(path)?;
+        index.write()?;
+        Ok(())
+    }
+
+    pub fn commit(&self, message: &str) -> Result<()> {
+        let mut index = self.repo.index()?;
+        let tree_id = index.write_tree()?;
+        let tree = self.repo.find_tree(tree_id)?;
+        let sig = self.repo.signature()?;
+        let parent = self.repo.head()?.peel_to_commit()?;
+        self.repo
+            .commit(Some("HEAD"), &sig, &sig, message, &tree, &[&parent])?;
+        Ok(())
+    }
+
+    pub fn create_tag_on_head(&self, name: &str, message: &str) -> Result<()> {
+        let head = self.repo.head()?.peel_to_commit()?;
+        let sig = self.repo.signature()?;
+        self.repo
+            .tag(name, head.as_object(), &sig, message, false)?;
+        Ok(())
+    }
+
     pub fn update_branch(&self, branch_name: &str) -> Result<()> {
         // If branch doesn't exist locally, create it from origin
         if self
@@ -265,34 +297,96 @@ impl GitService {
     }
 
     pub fn get_changelog(&self, release: &str) -> String {
-        let path = self.repo.path().parent().unwrap_or(Path::new("."));
-        let mut changelog = String::new();
+        let obj = match self.repo.revparse_single(release) {
+            Ok(o) => o,
+            Err(_) => return format!("No changelog available for release {}", release),
+        };
+        let commit = match obj.peel_to_commit() {
+            Ok(c) => c,
+            Err(_) => return format!("No changelog available for release {}", release),
+        };
+        let tree = match commit.tree() {
+            Ok(t) => t,
+            Err(_) => return format!("No changelog available for release {}", release),
+        };
 
-        // Try different filenames
         for filename in &["CHANGELOG.md", "changelog.md", "CHANGELOG"] {
-            if let Ok(output) = std::process::Command::new("git")
-                .arg("-C")
-                .arg(path)
-                .arg("show")
-                .arg(format!("{}:{}", release, filename))
-                .output()
-            {
-                if output.status.success() {
-                    changelog = String::from_utf8_lossy(&output.stdout)
-                        .lines()
-                        .take(20)
-                        .collect::<Vec<_>>()
-                        .join("\n");
-                    break;
+            if let Ok(entry) = tree.get_path(Path::new(filename)) {
+                if let Ok(blob) = self.repo.find_blob(entry.id()) {
+                    let content = String::from_utf8_lossy(blob.content());
+                    return content.lines().take(20).collect::<Vec<_>>().join("\n");
                 }
             }
         }
 
-        if changelog.is_empty() {
-            format!("No changelog available for release {}", release)
-        } else {
-            changelog
+        format!("No changelog available for release {}", release)
+    }
+
+    pub fn create_worktree(&self, _name: &str, path: &Path, branch: Option<&str>) -> Result<()> {
+        let opts = git2::WorktreeAddOptions::new();
+        let _wt = self.repo.worktree(_name, path, Some(&opts))?;
+
+        if let Some(b) = branch {
+            let wt_repo = Repository::open(path)?;
+
+            // Check if branch exists locally
+            if let Ok(local_branch) = wt_repo.find_branch(b, BranchType::Local) {
+                let commit = local_branch.get().peel_to_commit()?;
+                wt_repo.set_head(local_branch.get().name().unwrap())?;
+                wt_repo.checkout_tree(commit.as_object(), None)?;
+            } else if let Ok(remote_branch) =
+                wt_repo.find_branch(&format!("origin/{}", b), BranchType::Remote)
+            {
+                let commit = remote_branch.get().peel_to_commit()?;
+                let new_branch = wt_repo.branch(b, &commit, false)?;
+                wt_repo.set_head(new_branch.get().name().unwrap())?;
+                wt_repo.checkout_tree(commit.as_object(), None)?;
+            }
         }
+        Ok(())
+    }
+
+    pub fn push_branch(&self, branch_name: &str) -> Result<()> {
+        let mut remote = self.repo.find_remote("origin")?;
+        let refspec = format!("refs/heads/{}:refs/heads/{}", branch_name, branch_name);
+        // Note: git2 push often fails without proper credentials callback.
+        // We'll try, but this is a known limitation when not using system git.
+        remote.push(&[&refspec], None)?;
+        Ok(())
+    }
+
+    pub fn push_tag(&self, tag_name: &str) -> Result<()> {
+        let mut remote = self.repo.find_remote("origin")?;
+        let refspec = format!("refs/tags/{}:refs/tags/{}", tag_name, tag_name);
+        remote.push(&[&refspec], None)?;
+        Ok(())
+    }
+
+    pub fn pull(&self, branch_name: &str) -> Result<()> {
+        let mut remote = self.repo.find_remote("origin")?;
+        remote.fetch(&[branch_name], None, None)?;
+
+        let fetch_head = self.repo.find_reference("FETCH_HEAD")?;
+        let fetch_commit = fetch_head.peel_to_commit()?;
+
+        let mut checkout_builder = git2::build::CheckoutBuilder::new();
+        checkout_builder.force();
+
+        self.repo
+            .checkout_tree(fetch_commit.as_object(), Some(&mut checkout_builder))?;
+        self.repo.set_head(&format!("refs/heads/{}", branch_name))?;
+
+        Ok(())
+    }
+
+    pub fn has_branch(&self, name: &str) -> Result<bool> {
+        Ok(self.repo.find_branch(name, BranchType::Local).is_ok())
+    }
+
+    pub fn delete_branch(&self, name: &str) -> Result<()> {
+        let mut branch = self.repo.find_branch(name, BranchType::Local)?;
+        branch.delete()?;
+        Ok(())
     }
 }
 
