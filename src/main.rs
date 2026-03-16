@@ -2,7 +2,9 @@
 
 use clap::builder::styling::{AnsiColor, Effects, Styles};
 use clap::{CommandFactory, FromArgMatches, Parser, Subcommand};
+use daemonize::Daemonize;
 use std::path::PathBuf;
+use tokio::signal;
 
 mod assets;
 mod commands;
@@ -12,6 +14,8 @@ mod git;
 mod ssh;
 mod ui;
 mod utils;
+
+const SSH_AGENT_PORT: u16 = 2222;
 
 #[derive(Parser)]
 #[command(name = "docker-control")]
@@ -25,6 +29,18 @@ struct Cli {
     /// Enable debug output
     #[arg(long, global = true)]
     debug: bool,
+
+    /// Start SSH agent forwarding daemon
+    #[arg(long)]
+    start_ssh_agent: bool,
+
+    /// Stop SSH agent forwarding daemon
+    #[arg(long)]
+    stop_ssh_agent: bool,
+
+    /// Restart SSH agent forwarding daemon
+    #[arg(long)]
+    restart_ssh_agent: bool,
 
     #[command(subcommand)]
     command: Option<Commands>,
@@ -93,8 +109,6 @@ enum Commands {
     StopIngress,
     /// Update the project with the current template
     Update,
-    /// Update the Docker plugin to the latest version
-    UpdatePlugin,
     /// Return metadata for Docker CLI plugin
     #[command(name = "docker-cli-plugin-metadata", hide = true)]
     Metadata,
@@ -111,8 +125,79 @@ fn get_help_styles() -> Styles {
         .placeholder(AnsiColor::Cyan.on_default())
 }
 
-#[tokio::main]
-async fn main() {
+fn main() {
+    let args: Vec<String> = std::env::args().collect();
+
+    // Handle stop synchronously
+    if args.contains(&"--stop-ssh-agent".to_string()) {
+        if let Err(e) = crate::utils::stop_ssh_agent() {
+            eprintln!("Failed to stop SSH agent: {}", e);
+            std::process::exit(1);
+        } else {
+            println!("SSH agent forwarding stopped.");
+        }
+        return;
+    }
+
+    // Handle restart: stop then start
+    if args.contains(&"--restart-ssh-agent".to_string()) {
+        if let Err(e) = crate::utils::stop_ssh_agent() {
+            eprintln!("Warning: Failed to stop SSH agent: {}", e);
+        } else {
+            // Wait for port to close
+            let platform_info = utils::platform::detect_platform();
+            for _ in 0..50 {
+                // wait up to 5 seconds
+                if !utils::forwarding::is_port_open(&platform_info.bind_ip, SSH_AGENT_PORT) {
+                    break;
+                }
+                std::thread::sleep(std::time::Duration::from_millis(100));
+            }
+        }
+        // Fall through to start
+    }
+
+    // Handle start or restart
+    if args.contains(&"--start-ssh-agent".to_string())
+        || args.contains(&"--restart-ssh-agent".to_string())
+    {
+        let pid_file = "/tmp/docker-control-ssh-agent.pid";
+        let stdout_file = "/tmp/docker-control-ssh-agent.log";
+        let stderr_file = "/tmp/docker-control-ssh-agent.err";
+
+        let daemonize = Daemonize::new()
+            .pid_file(pid_file)
+            .stdout(std::fs::File::create(stdout_file).unwrap())
+            .stderr(std::fs::File::create(stderr_file).unwrap());
+
+        daemonize.start().expect("Failed to daemonize");
+
+        // Now start the async runtime
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        rt.block_on(async {
+            let platform_info = utils::platform::detect_platform();
+            if let Err(e) = utils::forwarding::ensure_forwarding(&platform_info).await {
+                eprintln!("Forwarding setup failed: {}", e);
+                std::process::exit(1);
+            }
+            unsafe {
+                std::env::set_var(
+                    "SSH_AUTH_PORT",
+                    format!("{}:{}", platform_info.bind_ip, SSH_AGENT_PORT),
+                );
+            }
+            eprintln!("SSH agent forwarding started in daemon mode.");
+            signal::ctrl_c().await.unwrap();
+        });
+        return;
+    }
+
+    // Normal path
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    rt.block_on(async_main());
+}
+
+async fn async_main() {
     let cmd = Cli::command().styles(get_help_styles());
 
     let matches = cmd.get_matches();
@@ -137,7 +222,7 @@ async fn main() {
                 break;
             }
         }
-        
+
         let project_dir = if project_dir.exists() {
             project_dir.canonicalize().unwrap_or(project_dir)
         } else {
@@ -167,7 +252,7 @@ async fn main() {
             custom_help,
             ui::yellow("Options:")
         );
-        
+
         // Use the factory to get a new command with the template and print help
         Cli::command()
             .styles(get_help_styles())
@@ -186,6 +271,51 @@ async fn main() {
             "ShortDescription": "IK Docker Control CLI Plugin"
         });
         println!("{}", serde_json::to_string(&metadata).unwrap());
+        return;
+    }
+
+    if cli.stop_ssh_agent {
+        if let Err(e) = crate::utils::stop_ssh_agent() {
+            ui::critical(format!("Failed to stop SSH agent: {}", e));
+        } else {
+            ui::info("SSH agent forwarding stopped.");
+        }
+        return;
+    }
+
+    if cli.restart_ssh_agent {
+        if let Err(e) = crate::utils::stop_ssh_agent() {
+            ui::warning(format!("Failed to stop SSH agent: {}", e));
+        }
+        // Then start
+    }
+
+    if cli.start_ssh_agent || cli.restart_ssh_agent {
+        let daemonize = Daemonize::new();
+        match daemonize.start() {
+            Ok(_) => {
+                // In daemon process
+                // Platform detection and forwarding
+                let platform_info = utils::platform::detect_platform();
+                ui::debug(format!("Platform detected: {:?}", platform_info.platform));
+
+                if let Err(e) = utils::forwarding::ensure_forwarding(&platform_info).await {
+                    ui::critical(format!("Forwarding setup failed: {}", e));
+                    return;
+                }
+
+                // Set SSH_AUTH_PORT
+                unsafe {
+                    std::env::set_var("SSH_AUTH_PORT", format!("{}:2222", platform_info.bind_ip));
+                }
+
+                ui::info("SSH agent forwarding started in daemon mode.");
+                signal::ctrl_c().await.unwrap();
+            }
+            Err(e) => {
+                ui::critical(format!("Failed to daemonize: {}", e));
+            }
+        }
         return;
     }
 
@@ -212,29 +342,44 @@ async fn main() {
         project_dir
     };
 
-    // Platform detection and forwarding
+    // Platform detection
     let platform_info = utils::platform::detect_platform();
     ui::debug(format!("Platform detected: {:?}", platform_info.platform));
 
-    if let Err(e) = utils::forwarding::ensure_forwarding(&platform_info).await {
-        ui::warning(format!("Forwarding setup failed: {}", e));
+    // Ensure SSH agent forwarding is running
+    if !utils::forwarding::is_port_open(&platform_info.bind_ip, SSH_AGENT_PORT) {
+        ui::info("Starting SSH agent forwarding daemon...");
+        // Spawn the daemon
+        if let Ok(exe) = std::env::current_exe() {
+            if let Err(e) = std::process::Command::new(exe)
+                .arg("--start-ssh-agent")
+                .spawn()
+            {
+                ui::warning(format!("Failed to spawn SSH agent daemon: {}", e));
+            } else {
+                // Wait for it to start
+                for _ in 0..50 {
+                    if utils::forwarding::is_port_open(&platform_info.bind_ip, SSH_AGENT_PORT) {
+                        break;
+                    }
+                    std::thread::sleep(std::time::Duration::from_millis(100));
+                }
+            }
+        } else {
+            ui::warning("Could not determine executable path to start SSH agent daemon");
+        }
     }
 
-    // Set environment variables for child processes (docker compose, etc.)
-    // We use the bind_ip for host-side DOCKER_HOST as it's where socat is listening.
-    // Native host resolution for host.docker.internal may not be available.
-    let (ssh_auth_host, docker_host_ip) =
-        (platform_info.bind_ip.clone(), platform_info.bind_ip.clone());
-
-    ui::debug(format!("Setting SSH_AUTH_PORT to {}:2222", ssh_auth_host));
-    ui::debug(format!(
-        "Setting DOCKER_HOST to tcp://{}:2375",
-        docker_host_ip
-    ));
-
-    unsafe {
-        std::env::set_var("SSH_AUTH_PORT", format!("{}:2222", ssh_auth_host));
-        std::env::set_var("DOCKER_HOST", format!("tcp://{}:2375", docker_host_ip));
+    if utils::forwarding::is_port_open(&platform_info.bind_ip, SSH_AGENT_PORT) {
+        // Set SSH_AUTH_PORT
+        unsafe {
+            std::env::set_var(
+                "SSH_AUTH_PORT",
+                format!("{}:{}", platform_info.bind_ip, SSH_AGENT_PORT),
+            );
+        }
+    } else {
+        ui::warning("SSH agent forwarding is not available. SSH keys may not be accessible.");
     }
 
     let command = match cli.command {
@@ -371,11 +516,6 @@ async fn main() {
         }
         Commands::Update => {
             if let Err(e) = commands::update::execute(&project_dir) {
-                ui::critical(format!("Error: {}", e));
-            }
-        }
-        Commands::UpdatePlugin => {
-            if let Err(e) = utils::update() {
                 ui::critical(format!("Error: {}", e));
             }
         }

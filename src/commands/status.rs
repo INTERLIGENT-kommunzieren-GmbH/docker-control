@@ -86,14 +86,14 @@ pub async fn get_summary(project_dir: &Path) -> String {
             Ok(containers) => {
                 let project_dir_str = project_dir.to_string_lossy().to_string();
                 let project_dir_trimmed = project_dir_str.trim_end_matches('/');
-                
+
                 let project_containers: Vec<_> = containers
                     .into_iter()
                     .filter(|c| {
                         if let Some(labels) = &c.labels {
                             let plugin_dir = labels.get("com.interligent.dockerplugin.dir");
                             let compose_dir = labels.get("com.docker.compose.project.working_dir");
-                            
+
                             if let Some(d) = compose_dir {
                                 d.trim_end_matches('/') == project_dir_trimmed
                             } else if let Some(d) = plugin_dir {
@@ -200,14 +200,14 @@ async fn show_docker_status(project_dir: &Path) {
         Ok(containers) => {
             let project_dir_str = project_dir.to_string_lossy().to_string();
             let project_dir_trimmed = project_dir_str.trim_end_matches('/');
-            
+
             let project_containers: Vec<_> = containers
                 .into_iter()
                 .filter(|c| {
                     if let Some(labels) = &c.labels {
                         let plugin_dir = labels.get("com.interligent.dockerplugin.dir");
                         let compose_dir = labels.get("com.docker.compose.project.working_dir");
-                        
+
                         let matches = if let Some(d) = compose_dir {
                             d.trim_end_matches('/') == project_dir_trimmed
                         } else if let Some(d) = plugin_dir {
@@ -215,7 +215,7 @@ async fn show_docker_status(project_dir: &Path) {
                         } else {
                             false
                         };
-                        
+
                         matches
                     } else {
                         false

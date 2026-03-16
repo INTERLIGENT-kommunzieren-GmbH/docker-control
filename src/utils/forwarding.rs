@@ -10,17 +10,25 @@ use tokio::io::copy;
 use tokio::net::{TcpListener, UnixStream};
 
 pub async fn ensure_forwarding(info: &PlatformInfo) -> Result<()> {
-    // 1. SSH Agent Forwarding (Port 2222)
-    ui::debug(format!("Checking if port {}:2222 is open", info.bind_ip));
-    if !is_port_open(&info.bind_ip, 2222) {
-        ui::debug("Port 2222 is closed, attempting to start SSH agent forwarding");
+    // 1. SSH Agent Forwarding
+    ui::debug(format!(
+        "Checking if port {}:{} is open",
+        info.bind_ip,
+        crate::SSH_AGENT_PORT
+    ));
+    if !is_port_open(&info.bind_ip, crate::SSH_AGENT_PORT) {
+        ui::debug(format!(
+            "Port {} is closed, attempting to start SSH agent forwarding",
+            crate::SSH_AGENT_PORT
+        ));
         if let Ok(ssh_auth_sock) = std::env::var("SSH_AUTH_SOCK") {
             ui::debug(format!("Using SSH_AUTH_SOCK: {}", ssh_auth_sock));
             ui::info(format!(
-                "Starting SSH agent forwarding socket on {}:2222",
-                info.bind_ip
+                "Starting SSH agent forwarding socket on {}:{}",
+                info.bind_ip,
+                crate::SSH_AGENT_PORT
             ));
-            start_forwarding(2222, &info.bind_ip, &ssh_auth_sock)?;
+            start_forwarding(crate::SSH_AGENT_PORT, &info.bind_ip, &ssh_auth_sock)?;
 
             // If we started a new forwarding, we might need to restart PHP containers
             if let Err(e) = restart_php_containers().await {
@@ -33,25 +41,10 @@ pub async fn ensure_forwarding(info: &PlatformInfo) -> Result<()> {
         ui::debug("Port 2222 is already open");
     }
 
-    // 2. Docker Socket Forwarding (Port 2375)
-    ui::debug(format!("Checking if port {}:2375 is open", info.bind_ip));
-    if !is_port_open(&info.bind_ip, 2375) {
-        ui::debug("Port 2375 is closed, attempting to start Docker socket forwarding");
-        let docker_sock = get_docker_socket().await?;
-        ui::debug(format!("Using Docker socket: {}", docker_sock));
-        ui::info(format!(
-            "Starting docker forwarding socket on {}:2375",
-            info.bind_ip
-        ));
-        start_forwarding(2375, &info.bind_ip, &docker_sock)?;
-    } else {
-        ui::debug("Port 2375 is already open");
-    }
-
     Ok(())
 }
 
-fn is_port_open(ip: &str, port: u16) -> bool {
+pub fn is_port_open(ip: &str, port: u16) -> bool {
     StdTcpStream::connect_timeout(
         &format!("{}:{}", ip, port).parse().unwrap(),
         Duration::from_millis(100),
@@ -129,24 +122,6 @@ fn start_forwarding(port: u16, bind_ip: &str, unix_sock: &str) -> Result<()> {
     std::thread::sleep(Duration::from_millis(100));
 
     Ok(())
-}
-
-async fn get_docker_socket() -> Result<String> {
-    // Bollard connects to the default local socket by default.
-    // If we want the actual socket path, we might need context inspect but bollard doesn't expose context.
-    // However, most systems have it in /var/run/docker.sock or npipe:////./pipe/docker_engine.
-    // Let's try to get it from context if possible or just use common defaults if not specified.
-
-    // Actually, calling `docker context inspect` is the most reliable way to get what the user currently has selected.
-    // But since the user wants to replace external dependencies, I'll try to find another way.
-    // If there is no other way, I might keep this specific one or just use common defaults.
-
-    // For now, I'll use common defaults since `bollard` itself knows how to find them.
-    if std::env::consts::OS == "windows" {
-        Ok(r"\\.\pipe\docker_engine".to_string())
-    } else {
-        Ok("/var/run/docker.sock".to_string())
-    }
 }
 
 async fn restart_php_containers() -> Result<()> {

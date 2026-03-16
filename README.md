@@ -213,13 +213,6 @@ Update the project with the current template, creating a backup of the existing 
 docker control update
 ```
 
-#### `update-plugin`
-Update the Docker plugin to the latest version.
-
-```bash
-docker control update-plugin
-```
-
 #### `version`
 Show version information for the CLI plugin.
 

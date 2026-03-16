@@ -200,7 +200,8 @@ async fn create_release_branch(
     // Commit composer.lock
     if let Err(e) = worktree_git.add_file(Path::new("composer.lock")) {
         ui::warning(format!("Failed to add composer.lock: {}", e));
-    } else if let Err(e) = worktree_git.commit(&format!("release: Add composer.lock for {}", version))
+    } else if let Err(e) =
+        worktree_git.commit(&format!("release: Add composer.lock for {}", version))
     {
         ui::warning(format!("Failed to commit composer.lock: {}", e));
     }
@@ -417,7 +418,10 @@ async fn generate_changelog(
 
     // Open for editing
     let editor = std::env::var("EDITOR").unwrap_or_else(|_| "nano".to_string());
-    let _ = AsyncCommand::new(editor).arg(&changelog_path).status().await;
+    let _ = AsyncCommand::new(editor)
+        .arg(&changelog_path)
+        .status()
+        .await;
 
     // Commit changelog
     let worktree_git = GitService::open(worktree_dir)?;
