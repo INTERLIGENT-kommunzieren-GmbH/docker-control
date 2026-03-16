@@ -108,13 +108,6 @@ Initialize an empty directory with the project template, creating a `.env` file 
 docker control init
 ```
 
-#### `install-plugin`
-Install the Docker CLI plugin system-wide.
-
-```bash
-docker control install-plugin
-```
-
 #### `merge`
 Merge release branch to main using selective cherry-pick workflow. Excludes release-specific commits (those with "release:" prefix) and provides interactive conflict resolution with merge tool support. Each commit is pushed immediately after successful cherry-pick.
 

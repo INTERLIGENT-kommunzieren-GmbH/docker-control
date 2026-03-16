@@ -73,8 +73,6 @@ enum Commands {
     },
     /// Initialize an empty directory with the project template
     Init,
-    /// Install the Docker CLI plugin system-wide
-    InstallPlugin,
     /// Merge release branch to main using selective cherry-pick workflow
     Merge {
         /// Optional module name
@@ -429,11 +427,6 @@ async fn async_main() {
         }
         Commands::Init => {
             if let Err(e) = commands::init::execute(&project_dir).await {
-                ui::critical(format!("Error: {}", e));
-            }
-        }
-        Commands::InstallPlugin => {
-            if let Err(e) = commands::install_plugin::execute() {
                 ui::critical(format!("Error: {}", e));
             }
         }

@@ -3,7 +3,6 @@ pub mod create_script;
 pub mod custom;
 pub mod deploy;
 pub mod init;
-pub mod install_plugin;
 pub mod merge;
 pub mod release;
 pub mod show_running;
