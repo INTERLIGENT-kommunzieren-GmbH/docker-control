@@ -6,15 +6,12 @@ services:
     image: nginxproxy/nginx-proxy:1.6
     networks:
       - "frontend-tier"
-    extra_hosts:
-      - "host.docker.internal:host-gateway"
     ports:
       - "80:80"
       - "443:443"
     restart: always
-    environment:
-      DOCKER_HOST: tcp://host.docker.internal:2375
     volumes:
+      - "/var/run/docker.sock:/tmp/docker.sock:ro,z"
       - "${PLUGIN_MOUNTS_DIR}/ingress/vhosts.d:/etc/nginx/vhost.d:ro"
       - "${PLUGIN_MOUNTS_DIR}/ingress/tls:/etc/nginx/certs:ro"
     logging:
@@ -29,16 +26,13 @@ services:
     image: sebastienheyd/self-signed-proxy-companion
     environment:
       NGINX_PROXY_CONTAINER: nginx-proxy
-      DOCKER_HOST: tcp://host.docker.internal:2375
     networks:
       - "frontend-tier"
-    extra_hosts:
-      - "host.docker.internal:host-gateway"
     restart: always
     volumes:
+      - "/var/run/docker.sock:/var/run/docker.sock:ro,z"
       - "${PLUGIN_MOUNTS_DIR}/ingress/tls:/etc/nginx/certs:rw"
 
 networks:
   frontend-tier:
     name: proxy
-

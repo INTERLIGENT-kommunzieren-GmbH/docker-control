@@ -88,16 +88,18 @@ services:
     networks:
       - "backend-tier"
 
-  cache:
-    labels:
-      com.interligent.dockerplugin.service: "cache"
-      com.interligent.dockerplugin.dir: "${PWD}"
-      com.interligent.dockerplugin.project: "${PROJECTNAME}"
-    image: fduarte42/docker-pogocache:1.0
-    command: -h 0.0.0.0
+  redis:
+    image: valkey/valkey:8.1
+    command: >
+      valkey-server
+      --appendonly yes
+      --appendfsync everysec
+      --dir /data
+      --dbfilename dump.rdb
+      --maxmemory 512mb
+      --maxmemory-policy allkeys-lru
     networks:
       - "backend-tier"
-    restart: always
     deploy:
       restart_policy:
         condition: any
@@ -107,6 +109,8 @@ services:
           memory: 1G
         reservations:
           memory: 512M
+    volumes:
+      - "./volumes/valkey/persist:/data"
 
   mail:
     labels:
