@@ -3,8 +3,7 @@ use crate::ui;
 use anyhow::{Result, anyhow};
 use inquire::{Confirm, Select};
 use std::path::{Path, PathBuf};
-use std::process::Command;
-use tokio::process::Command as AsyncCommand;
+use std::process::{Command, Stdio};
 
 struct WorktreeCleanup<'a> {
     git_path: &'a Path,
@@ -168,13 +167,15 @@ pub async fn execute(project_dir: &Path, module: Option<String>) -> Result<()> {
 
         // Cherry-pick natively if possible, but for interactive conflict resolution,
         // using Command on the worktree is safer and easier.
-        let status = AsyncCommand::new("git")
+        let status = Command::new("git")
             .arg("-C")
             .arg(&merge_wt_path)
             .arg("cherry-pick")
             .arg(&hash)
-            .status()
-            .await?;
+            .stdin(Stdio::inherit())
+            .stdout(Stdio::inherit())
+            .stderr(Stdio::inherit())
+            .status()?;
 
         if !status.success() {
             ui::critical(format!(
@@ -191,22 +192,23 @@ pub async fn execute(project_dir: &Path, module: Option<String>) -> Result<()> {
 
                 match choice {
                     "Start merge tool" => {
-                        let _ = AsyncCommand::new("git")
+                        let _ = Command::new("git")
                             .arg("-C")
                             .arg(&merge_wt_path)
                             .arg("mergetool")
-                            .status()
-                            .await?;
+                            .stdin(Stdio::inherit())
+                            .stdout(Stdio::inherit())
+                            .stderr(Stdio::inherit())
+                            .status();
                     }
                     "I have resolved it" => {
                         // Check if conflicts still exist
-                        let output = AsyncCommand::new("git")
+                        let output = Command::new("git")
                             .arg("-C")
                             .arg(&merge_wt_path)
                             .arg("status")
                             .arg("--porcelain")
-                            .output()
-                            .await?;
+                            .output()?;
                         let stdout = String::from_utf8_lossy(&output.stdout);
                         if stdout.contains("UU") || stdout.contains("AA") || stdout.contains("DD") {
                             ui::warning("Conflicts still exist in the following files:");
@@ -222,24 +224,25 @@ pub async fn execute(project_dir: &Path, module: Option<String>) -> Result<()> {
                         }
 
                         // Commit the resolution
-                        let _ = AsyncCommand::new("git")
+                        let _ = Command::new("git")
                             .arg("-C")
                             .arg(&merge_wt_path)
                             .arg("cherry-pick")
                             .arg("--continue")
                             .env("GIT_EDITOR", "true") // avoid opening editor if possible
-                            .status()
-                            .await?;
+                            .stdin(Stdio::inherit())
+                            .stdout(Stdio::inherit())
+                            .stderr(Stdio::inherit())
+                            .status();
                         break;
                     }
                     _ => {
-                        let _ = AsyncCommand::new("git")
+                        let _ = Command::new("git")
                             .arg("-C")
                             .arg(&merge_wt_path)
                             .arg("cherry-pick")
                             .arg("--abort")
-                            .status()
-                            .await?;
+                            .status();
                         return Err(anyhow!("Merge aborted by user due to conflicts."));
                     }
                 }

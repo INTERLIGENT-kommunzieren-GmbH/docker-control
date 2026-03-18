@@ -5,8 +5,7 @@ use inquire::{Confirm, Select};
 use serde_json::Value;
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::process::Command;
-use tokio::process::Command as AsyncCommand;
+use std::process::{Command, Stdio};
 
 struct WorktreeCleanup<'a> {
     git_path: &'a Path,
@@ -318,7 +317,7 @@ async fn execute_composer_install(project_dir: &Path, worktree_dir: &Path) -> Re
     let ssh_auth_sock =
         std::env::var("SSH_AUTH_SOCK").unwrap_or_else(|_| "/tmp/ssh-agent.sock".to_string());
 
-    let status = AsyncCommand::new("docker")
+    let status = Command::new("docker")
         .arg("run")
         .arg("--rm")
         .arg("-u")
@@ -335,8 +334,10 @@ async fn execute_composer_install(project_dir: &Path, worktree_dir: &Path) -> Re
         .arg("bash")
         .arg("-c")
         .arg("composer i -o")
-        .status()
-        .await?;
+        .stdin(Stdio::inherit())
+        .stdout(Stdio::inherit())
+        .stderr(Stdio::inherit())
+        .status()?;
 
     if !status.success() {
         return Err(anyhow!("Composer install failed"));
@@ -418,10 +419,12 @@ async fn generate_changelog(
 
     // Open for editing
     let editor = std::env::var("EDITOR").unwrap_or_else(|_| "nano".to_string());
-    let _ = AsyncCommand::new(editor)
+    let _ = Command::new(editor)
         .arg(&changelog_path)
-        .status()
-        .await;
+        .stdin(Stdio::inherit())
+        .stdout(Stdio::inherit())
+        .stderr(Stdio::inherit())
+        .status();
 
     // Commit changelog
     let worktree_git = GitService::open(worktree_dir)?;
