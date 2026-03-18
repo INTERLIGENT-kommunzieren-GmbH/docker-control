@@ -344,24 +344,50 @@ impl GitService {
         format!("No changelog available for release {}", release)
     }
 
-    pub fn create_worktree(&self, _name: &str, path: &Path, branch: Option<&str>) -> Result<()> {
-        let opts = git2::WorktreeAddOptions::new();
-        let _wt = self.repo.worktree(_name, path, Some(&opts))?;
+    pub fn create_worktree(&self, name: &str, path: &Path, branch: Option<&str>) -> Result<()> {
+        let mut opts = git2::WorktreeAddOptions::new();
+
+        let branch_obj = if let Some(b) = branch {
+            if name == b {
+                // We want to track an existing branch or create one with this name
+                if let Ok(local_branch) = self.repo.find_branch(b, BranchType::Local) {
+                    Some(local_branch)
+                } else if let Ok(remote_branch) =
+                    self.repo.find_branch(&format!("origin/{}", b), BranchType::Remote)
+                {
+                    Some(remote_branch)
+                } else {
+                    None
+                }
+            } else {
+                // We want to create a new branch 'name' based on 'b'
+                let obj = self.repo.revparse_single(b)?;
+                let commit = obj
+                    .as_commit()
+                    .ok_or_else(|| anyhow!("Target {} is not a commit", b))?;
+
+                // Create the branch in main repo first
+                let new_branch = self.repo.branch(name, commit, false)?;
+                Some(new_branch)
+            }
+        } else {
+            None
+        };
+
+        if let Some(ref b) = branch_obj {
+            opts.reference(Some(b.get()));
+        }
+
+        let _wt = self.repo.worktree(name, path, Some(&opts))?;
 
         if let Some(b) = branch {
+            let target_branch = if name == b { b } else { name };
             let wt_repo = Repository::open(path)?;
 
             // Check if branch exists locally
-            if let Ok(local_branch) = wt_repo.find_branch(b, BranchType::Local) {
+            if let Ok(local_branch) = wt_repo.find_branch(target_branch, BranchType::Local) {
                 let commit = local_branch.get().peel_to_commit()?;
                 wt_repo.set_head(local_branch.get().name().unwrap())?;
-                wt_repo.checkout_tree(commit.as_object(), None)?;
-            } else if let Ok(remote_branch) =
-                wt_repo.find_branch(&format!("origin/{}", b), BranchType::Remote)
-            {
-                let commit = remote_branch.get().peel_to_commit()?;
-                let new_branch = wt_repo.branch(b, &commit, false)?;
-                wt_repo.set_head(new_branch.get().name().unwrap())?;
                 wt_repo.checkout_tree(commit.as_object(), None)?;
             }
         }
@@ -428,4 +454,87 @@ fn is_release_branch_name(name: &str) -> bool {
     parts[0].chars().all(|c| c.is_ascii_digit())
         && parts[1].chars().all(|c| c.is_ascii_digit())
         && parts[2] == "x"
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::fs;
+
+    fn setup_repo(path: &Path) -> Repository {
+        if path.exists() {
+            fs::remove_dir_all(path).unwrap();
+        }
+        fs::create_dir_all(path).unwrap();
+        let repo = Repository::init(path).unwrap();
+
+        // Create initial commit
+        {
+            let signature = repo.signature().unwrap();
+            let tree_id = repo.index().unwrap().write_tree().unwrap();
+            let tree = repo.find_tree(tree_id).unwrap();
+            repo.commit(
+                Some("HEAD"),
+                &signature,
+                &signature,
+                "Initial commit",
+                &tree,
+                &[],
+            )
+            .unwrap();
+        }
+
+        repo
+    }
+
+    #[test]
+    fn test_create_worktree_existing_branch() {
+        let root = std::env::temp_dir().join("docker-control-test-existing");
+        let repo = setup_repo(&root);
+        let git = GitService { repo };
+
+        // Create a branch
+        let head = git.repo.head().unwrap().peel_to_commit().unwrap();
+        git.repo.branch("8.0.x", &head, false).unwrap();
+
+        // Create worktree for existing branch
+        let wt_path = root.join("wt-8.0.x");
+        let result = git.create_worktree("8.0.x", &wt_path, Some("8.0.x"));
+
+        assert!(
+            result.is_ok(),
+            "Failed to create worktree for existing branch: {:?}",
+            result.err()
+        );
+        assert!(wt_path.exists());
+        assert!(wt_path.join(".git").exists());
+
+        // Cleanup
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn test_create_worktree_new_branch_from_checked_out() {
+        let root = std::env::temp_dir().join("docker-control-test-checked-out");
+        let repo = setup_repo(&root);
+        let git = GitService { repo };
+
+        // Current branch is 'master' or 'main' (already checked out in setup_repo)
+        let head_branch = git.get_current_branch().unwrap();
+
+        // Create worktree for new branch based on head_branch
+        let wt_path = root.join("wt-from-main");
+        let result = git.create_worktree("9.0.x", &wt_path, Some(&head_branch));
+
+        assert!(
+            result.is_ok(),
+            "Failed to create worktree from checked out branch: {:?}",
+            result.err()
+        );
+        assert!(wt_path.exists());
+        assert!(git.repo.find_branch("9.0.x", BranchType::Local).is_ok());
+
+        // Cleanup
+        let _ = fs::remove_dir_all(&root);
+    }
 }

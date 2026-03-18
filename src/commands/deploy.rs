@@ -192,7 +192,10 @@ async fn create_deployment_archive(
 
     // Run composer install inside a container for parity with bash
     let php_version = get_env_var(project_dir, "PHP_VERSION").unwrap_or_else(|| "8.2".to_string());
-    let ssh_auth_port = get_env_var(project_dir, "SSH_AUTH_PORT");
+    let ssh_auth_port = std::env::var("SSH_AUTH_PORT")
+        .ok()
+        .or_else(|| get_env_var(project_dir, "SSH_AUTH_PORT"))
+        .unwrap_or_else(|| "host.docker.internal:2222".to_string());
 
     ui::info(format!(
         "Running composer install via Docker (PHP {})...",
@@ -208,11 +211,9 @@ async fn create_deployment_archive(
             libc::getgid()
         }))
         .arg("--group-add")
-        .arg("www-data");
-
-    if let Some(port) = ssh_auth_port {
-        docker_cmd.arg("-e").arg(format!("SSH_AUTH_PORT={}", port));
-    }
+        .arg("www-data")
+        .arg("-e")
+        .arg(format!("SSH_AUTH_PORT={}", ssh_auth_port));
 
     docker_cmd
         .arg("-e")

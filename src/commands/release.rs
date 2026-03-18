@@ -281,20 +281,70 @@ fn update_composer_version(worktree_dir: &Path, version: &str) -> Result<()> {
         return Ok(());
     }
 
+    let composer_version = if version.ends_with(".x") && !version.ends_with("-dev") {
+        format!("{}-dev", version)
+    } else {
+        version.to_string()
+    };
+
     ui::info(format!(
         "Updating version in composer.json to {}...",
-        version
+        composer_version
     ));
     let content = fs::read_to_string(&composer_path)?;
     let mut json: Value = serde_json::from_str(&content)?;
 
     if let Some(obj) = json.as_object_mut() {
-        obj.insert("version".to_string(), Value::String(version.to_string()));
+        obj.insert("version".to_string(), Value::String(composer_version));
     }
 
     let updated_content = serde_json::to_string_pretty(&json)?;
     fs::write(composer_path, updated_content)?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::fs;
+
+    #[test]
+    fn test_update_composer_version() -> Result<()> {
+        let root = std::env::temp_dir().join("docker-control-test-composer");
+        if root.exists() {
+            fs::remove_dir_all(&root)?;
+        }
+        fs::create_dir_all(&root)?;
+
+        let composer_path = root.join("composer.json");
+
+        // Test with .x version
+        let initial_json = r#"{"name": "test/project", "version": "1.0.0"}"#;
+        fs::write(&composer_path, initial_json)?;
+
+        update_composer_version(&root, "9.0.x")?;
+
+        let updated_content = fs::read_to_string(&composer_path)?;
+        let updated_json: Value = serde_json::from_str(&updated_content)?;
+        assert_eq!(updated_json["version"], "9.0.x-dev");
+
+        // Test with tag version (no .x)
+        update_composer_version(&root, "9.0.1")?;
+        let updated_content = fs::read_to_string(&composer_path)?;
+        let updated_json: Value = serde_json::from_str(&updated_content)?;
+        assert_eq!(updated_json["version"], "9.0.1");
+
+        // Test with already -dev version
+        update_composer_version(&root, "9.0.x-dev")?;
+        let updated_content = fs::read_to_string(&composer_path)?;
+        let updated_json: Value = serde_json::from_str(&updated_content)?;
+        assert_eq!(updated_json["version"], "9.0.x-dev");
+
+        // Cleanup
+        let _ = fs::remove_dir_all(&root);
+
+        Ok(())
+    }
 }
 
 fn execute_composer_install(project_dir: &Path, worktree_dir: &Path) -> Result<()> {
@@ -312,8 +362,8 @@ fn execute_composer_install(project_dir: &Path, worktree_dir: &Path) -> Result<(
         .map(|l| l.split('=').nth(1).unwrap_or("8.2"))
         .unwrap_or("8.2");
 
-    let ssh_auth_sock =
-        std::env::var("SSH_AUTH_SOCK").unwrap_or_else(|_| "/tmp/ssh-agent.sock".to_string());
+    let ssh_auth_port = std::env::var("SSH_AUTH_PORT")
+        .unwrap_or_else(|_| "host.docker.internal:2222".to_string());
 
     let status = Command::new("docker")
         .arg("run")
@@ -323,15 +373,17 @@ fn execute_composer_install(project_dir: &Path, worktree_dir: &Path) -> Result<(
             libc::getgid()
         }))
         .arg("-e")
-        .arg(format!("SSH_AUTH_SOCK={}", ssh_auth_sock))
-        .arg("-v")
-        .arg(format!("{}:/tmp/ssh-agent.sock", ssh_auth_sock))
+        .arg(format!("SSH_AUTH_PORT={}", ssh_auth_port))
+        .arg("-e")
+        .arg("SSH_AUTH_SOCK=/tmp/ssh-agent.sock")
+        .arg("--add-host")
+        .arg("host.docker.internal:host-gateway")
         .arg("-v")
         .arg(format!("{}:/var/www/html", worktree_dir.to_string_lossy()))
         .arg(format!("fduarte42/docker-php:{}", php_version))
         .arg("bash")
         .arg("-c")
-        .arg("composer i -o")
+        .arg("/docker-php-init; composer i -o")
         .stdin(Stdio::inherit())
         .stdout(Stdio::inherit())
         .stderr(Stdio::inherit())
