@@ -40,7 +40,7 @@ impl<'a> Drop for WorktreeCleanup<'a> {
     }
 }
 
-pub async fn execute(project_dir: &Path, module: Option<String>) -> Result<()> {
+pub fn execute(project_dir: &Path, module: Option<String>) -> Result<()> {
     let mut selected_module = module;
 
     // Module selection logic

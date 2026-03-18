@@ -43,7 +43,7 @@ impl<'a> Drop for WorktreeCleanup<'a> {
     }
 }
 
-pub async fn execute(project_dir: &Path, module: Option<String>) -> Result<()> {
+pub fn execute(project_dir: &Path, module: Option<String>) -> Result<()> {
     let mut selected_module = module;
 
     // Module selection logic
@@ -126,8 +126,7 @@ pub async fn execute(project_dir: &Path, module: Option<String>) -> Result<()> {
             &branch,
             &release,
             selected_module.as_deref(),
-        )
-        .await?;
+        )?;
     } else {
         // For initial, major, minor, we create a new branch
         create_release_branch(
@@ -137,8 +136,7 @@ pub async fn execute(project_dir: &Path, module: Option<String>) -> Result<()> {
             &release,
             &primary_branch,
             selected_module.as_deref(),
-        )
-        .await?;
+        )?;
     }
 
     ui::success("=== Release Creation Complete ===".to_string());
@@ -150,7 +148,7 @@ pub async fn execute(project_dir: &Path, module: Option<String>) -> Result<()> {
     Ok(())
 }
 
-async fn create_release_branch(
+fn create_release_branch(
     project_dir: &Path,
     git_path: &Path,
     git: &GitService,
@@ -194,7 +192,7 @@ async fn create_release_branch(
     }
 
     // Create composer.lock via Docker
-    execute_composer_install(project_dir, &worktree_dir).await?;
+    execute_composer_install(project_dir, &worktree_dir)?;
 
     // Commit composer.lock
     if let Err(e) = worktree_git.add_file(Path::new("composer.lock")) {
@@ -206,7 +204,7 @@ async fn create_release_branch(
     }
 
     // Generate changelog
-    generate_changelog(git, &worktree_dir, version, primary_branch, true).await?;
+    generate_changelog(git, &worktree_dir, version, primary_branch, true)?;
 
     // Push branch
     ui::info(format!("Pushing release branch {} to origin...", version));
@@ -215,7 +213,7 @@ async fn create_release_branch(
     Ok(())
 }
 
-async fn create_patch_tag(
+fn create_patch_tag(
     project_dir: &Path,
     git_path: &Path,
     git: &GitService,
@@ -262,7 +260,7 @@ async fn create_patch_tag(
     }
 
     // Generate changelog
-    generate_changelog(git, &worktree_dir, tag, branch, false).await?;
+    generate_changelog(git, &worktree_dir, tag, branch, false)?;
 
     // Create tag
     ui::info(format!("Creating tag {}...", tag));
@@ -299,7 +297,7 @@ fn update_composer_version(worktree_dir: &Path, version: &str) -> Result<()> {
     Ok(())
 }
 
-async fn execute_composer_install(project_dir: &Path, worktree_dir: &Path) -> Result<()> {
+fn execute_composer_install(project_dir: &Path, worktree_dir: &Path) -> Result<()> {
     if !worktree_dir.join("composer.json").exists() {
         return Ok(());
     }
@@ -349,7 +347,7 @@ async fn execute_composer_install(project_dir: &Path, worktree_dir: &Path) -> Re
     Ok(())
 }
 
-async fn generate_changelog(
+fn generate_changelog(
     git: &GitService,
     worktree_dir: &Path,
     version: &str,

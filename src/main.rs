@@ -431,7 +431,7 @@ async fn async_main() {
             }
         }
         Commands::Merge { module } => {
-            if let Err(e) = commands::merge::execute(&project_dir, module).await {
+            if let Err(e) = commands::merge::execute(&project_dir, module) {
                 ui::critical(format!("Error: {}", e));
             }
         }
@@ -447,7 +447,7 @@ async fn async_main() {
             }
         }
         Commands::Release { module } => {
-            if let Err(e) = commands::release::execute(&project_dir, module).await {
+            if let Err(e) = commands::release::execute(&project_dir, module) {
                 ui::critical(format!("Error: {}", e));
             }
         }
