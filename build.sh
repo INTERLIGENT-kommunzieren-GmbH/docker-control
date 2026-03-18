@@ -10,6 +10,10 @@ mkdir -p "$DIST_DIR"
 # Detect host target
 HOST_TARGET=$(rustc -vV | grep host | cut -d ' ' -f2)
 
+if [ -f "$DIST_DIR/${BINARY_NAME}-${HOST_TARGET}" ]; then
+  $DIST_DIR/${BINARY_NAME}-${HOST_TARGET} --stop-ssh-agent 2>/dev/null || true
+fi
+
 echo "Building Docker Control Plugin for host: $HOST_TARGET..."
 
 cargo build --release
