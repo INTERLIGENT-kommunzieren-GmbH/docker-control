@@ -1,5 +1,5 @@
 use anyhow::{Context, Result, anyhow};
-use git2::{BranchType, Repository};
+use git2::{BranchType, Cred, FetchOptions, PushOptions, RemoteCallbacks, Repository};
 use std::path::Path;
 
 pub struct GitService {
@@ -7,6 +7,14 @@ pub struct GitService {
 }
 
 impl GitService {
+    pub fn auth_callbacks() -> RemoteCallbacks<'static> {
+        let mut callbacks = RemoteCallbacks::new();
+        callbacks.credentials(|_url, username_from_url, _allowed_types| {
+            let user: &str = username_from_url.unwrap_or("git");
+            Cred::ssh_key_from_agent(user)
+        });
+        callbacks
+    }
     pub fn open(path: &Path) -> Result<Self> {
         let repo = Repository::open(path)
             .context(format!("Failed to open git repository at {:?}", path))?;
@@ -190,15 +198,29 @@ impl GitService {
         }
     }
 
-    pub fn fetch_all(&self) -> Result<()> {
+    pub fn fetch_all(&self) -> anyhow::Result<()> {
         let mut remote = self.repo.find_remote("origin")?;
-        remote.fetch(&["+refs/heads/*:refs/remotes/origin/*"], None, None)?;
+
+        let callbacks = Self::auth_callbacks();
+
+        let mut fetch_options = FetchOptions::new();
+        fetch_options.remote_callbacks(callbacks);
+
+        remote.fetch(
+            &["+refs/heads/*:refs/remotes/origin/*"],
+            Some(&mut fetch_options),
+            None,
+        )?;
+
         Ok(())
     }
 
     pub fn fetch_tags(&self) -> Result<()> {
         let mut remote = self.repo.find_remote("origin")?;
-        remote.fetch(&["refs/tags/*:refs/tags/*"], None, None)?;
+        let callbacks = Self::auth_callbacks();
+        let mut fetch_options = FetchOptions::new();
+        fetch_options.remote_callbacks(callbacks);
+        remote.fetch(&["refs/tags/*:refs/tags/*"], Some(&mut fetch_options), None)?;
         Ok(())
     }
 
@@ -349,22 +371,29 @@ impl GitService {
     pub fn push_branch(&self, branch_name: &str) -> Result<()> {
         let mut remote = self.repo.find_remote("origin")?;
         let refspec = format!("refs/heads/{}:refs/heads/{}", branch_name, branch_name);
-        // Note: git2 push often fails without proper credentials callback.
-        // We'll try, but this is a known limitation when not using system git.
-        remote.push(&[&refspec], None)?;
+        let callbacks = Self::auth_callbacks();
+        let mut push_options = PushOptions::new();
+        push_options.remote_callbacks(callbacks);
+        remote.push(&[&refspec], Some(&mut push_options))?;
         Ok(())
     }
 
     pub fn push_tag(&self, tag_name: &str) -> Result<()> {
         let mut remote = self.repo.find_remote("origin")?;
         let refspec = format!("refs/tags/{}:refs/tags/{}", tag_name, tag_name);
-        remote.push(&[&refspec], None)?;
+        let callbacks = Self::auth_callbacks();
+        let mut push_options = PushOptions::new();
+        push_options.remote_callbacks(callbacks);
+        remote.push(&[&refspec], Some(&mut push_options))?;
         Ok(())
     }
 
     pub fn pull(&self, branch_name: &str) -> Result<()> {
         let mut remote = self.repo.find_remote("origin")?;
-        remote.fetch(&[branch_name], None, None)?;
+        let callbacks = Self::auth_callbacks();
+        let mut fetch_options = FetchOptions::new();
+        fetch_options.remote_callbacks(callbacks);
+        remote.fetch(&[branch_name], Some(&mut fetch_options), None)?;
 
         let fetch_head = self.repo.find_reference("FETCH_HEAD")?;
         let fetch_commit = fetch_head.peel_to_commit()?;
