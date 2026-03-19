@@ -73,7 +73,7 @@ jobs:
         with:
           name: cargo-dist-cache
           path: ~/.cargo/bin/dist
-      # sure would be cool if github gave us proper conditionals...
+      # sure would be cool if GitHub gave us proper conditionals...
       # so here's a doubly-nested ternary-via-truthiness to try to provide the best possible
       # functionality based on whether this is a pull_request, and whether it's from a fork.
       # (PRs run on the *source* but secrets are usually on the *target* -- that's *good*
@@ -105,7 +105,7 @@ jobs:
       # Target platforms/runners are computed by dist in create-release.
       # Each member of the matrix has the following arguments:
       #
-      # - runner: the github runner
+      # - runner: the GitHub runner
       # - dist-args: cli flags to pass to dist
       # - install-dist: expression to run to install dist on the runner
       #
@@ -152,9 +152,9 @@ jobs:
           echo "dist ran successfully"
       - id: cargo-dist
         name: Post-build
-        # We force bash here just because github makes it really hard to get values up
+        # We force bash here just because GitHub makes it really hard to get values up
         # to "real" actions without writing to env-vars, and writing to env-vars has
-        # inconsistent syntax between shell and powershell.
+        # inconsistent syntax between shell and PowerShell.
         shell: bash
         run: |
           # Parse out what we just built and upload it to scratch storage
