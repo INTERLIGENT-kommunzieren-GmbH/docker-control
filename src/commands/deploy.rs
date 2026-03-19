@@ -50,17 +50,16 @@ pub async fn execute(
     let changelog = git.get_changelog(&release);
 
     // Confirm deployment
-    if !yes {
-        if !Confirm::new(&format!(
+    if !yes
+        && !Confirm::new(&format!(
             "Proceed with deployment of '{}' to '{}' environment?",
             release, env_name
         ))
         .with_default(false)
         .prompt()?
-        {
-            ui::info("Deployment cancelled");
-            return Ok(());
-        }
+    {
+        ui::info("Deployment cancelled");
+        return Ok(());
     }
 
     // Teams notification: started
@@ -106,16 +105,16 @@ pub async fn execute(
     // Transfer and execute
     let server_root = env.service_root.as_deref().unwrap_or("/var/www/html");
 
-    if let Err(e) = perform_deployment(
+    if let Err(e) = perform_deployment(DeploymentContext {
         project_dir,
         env,
-        &env_name,
-        &archive_path,
-        &release_dir,
+        env_name: &env_name,
+        archive_path: &archive_path,
+        release_dir: &release_dir,
         server_root,
         maintenance_mode,
         yes,
-    )
+    })
     .await
     {
         if let Some(webhook) = &env.teams_webhook_url {
@@ -265,32 +264,34 @@ async fn create_deployment_archive(
     Ok(())
 }
 
-async fn perform_deployment(
-    project_dir: &Path,
-    env: &Environment,
-    env_name: &str,
-    archive_path: &Path,
-    release_dir: &str,
-    server_root: &str,
+struct DeploymentContext<'a> {
+    project_dir: &'a Path,
+    env: &'a Environment,
+    env_name: &'a str,
+    archive_path: &'a Path,
+    release_dir: &'a str,
+    server_root: &'a str,
     maintenance_mode: String,
     yes: bool,
-) -> Result<()> {
-    let user = &env.user;
-    let domain = &env.domain;
-    let remote_releases = format!("{}/releases", server_root);
+}
+
+async fn perform_deployment(ctx: DeploymentContext<'_>) -> Result<()> {
+    let user = &ctx.env.user;
+    let domain = &ctx.env.domain;
+    let remote_releases = format!("{}/releases", ctx.server_root);
     let remote_archive = format!(
         "{}/{}",
         remote_releases,
-        archive_path.file_name().unwrap().to_str().unwrap()
+        ctx.archive_path.file_name().unwrap().to_str().unwrap()
     );
-    let remote_release_path = format!("{}/{}", remote_releases, release_dir);
+    let remote_release_path = format!("{}/{}", remote_releases, ctx.release_dir);
 
     // 1. Ensure releases dir exists
     ssh::exec_ssh(user, domain, &format!("mkdir -p {}", remote_releases))?;
 
     // 2. Transfer archive
     ui::info("Transferring archive...");
-    ssh::copy_ssh(user, domain, archive_path, &remote_archive)?;
+    ssh::copy_ssh(user, domain, ctx.archive_path, &remote_archive)?;
 
     // 3. Extract and remove archive
     ui::info("Extracting archive...");
@@ -306,7 +307,7 @@ async fn perform_deployment(
     // ls -d1t $SERVER_ROOT/releases/* | grep -v $(readlink -f $SERVER_ROOT/current) | egrep "^$SERVER_ROOT/releases/[0-9]{14}_.+$" | tail -n +6 | xargs rm -rf
     let cleanup_cmd = format!(
         "bash -c 'ls -d1t {}/* 2>/dev/null | grep -v $(readlink -f {}/current 2>/dev/null || echo \"none\") | grep -E \"{}/[0-9]{{14}}_.+$\" | tail -n +6 | xargs rm -rf 2>/dev/null || true'",
-        remote_releases, server_root, remote_releases
+        remote_releases, ctx.server_root, remote_releases
     );
     let _ = ssh::exec_ssh(user, domain, &cleanup_cmd);
 
@@ -315,17 +316,21 @@ async fn perform_deployment(
     let _ = ssh::exec_ssh(user, domain, "sudo php-fpm-reload.sh");
 
     // 6. Maintenance mode selection and activation
-    let maintenance_mode = if yes {
-        maintenance_mode
+    let maintenance_mode = if ctx.yes {
+        ctx.maintenance_mode
     } else {
         Select::new("Select maintenance mode", vec!["hard", "soft"])
-            .with_starting_cursor(if maintenance_mode == "soft" { 1 } else { 0 })
+            .with_starting_cursor(if ctx.maintenance_mode == "soft" {
+                1
+            } else {
+                0
+            })
             .prompt()?
             .to_string()
     };
     ui::info(format!("Enabling maintenance mode ({})", maintenance_mode));
 
-    let console_current = format!("php {}/current/public/index.php", server_root);
+    let console_current = format!("php {}/current/public/index.php", ctx.server_root);
     let console_new = format!("php {}/public/index.php", remote_release_path);
 
     // We try to enable maintenance on current if it exists, and on new.
@@ -345,10 +350,10 @@ async fn perform_deployment(
 
     // 7. Hooks: pre_deploy_hook
     execute_hook(
-        project_dir,
-        env_name,
+        ctx.project_dir,
+        ctx.env_name,
         "pre_deploy_hook",
-        vec![user, domain, server_root, release_dir, &console_new],
+        vec![user, domain, ctx.server_root, ctx.release_dir, &console_new],
     )?;
 
     // 8. Cache clearing, migrations, etc.
@@ -365,9 +370,10 @@ async fn perform_deployment(
         &format!("{} orm:clear-cache:query", console_new),
     )?;
 
-    if yes || Confirm::new("Clear result cache?")
-        .with_default(false)
-        .prompt()?
+    if ctx.yes
+        || Confirm::new("Clear result cache?")
+            .with_default(false)
+            .prompt()?
     {
         ssh::exec_ssh(
             user,
@@ -376,9 +382,10 @@ async fn perform_deployment(
         )?;
     }
 
-    if yes || Confirm::new("Execute migrations?")
-        .with_default(true)
-        .prompt()?
+    if ctx.yes
+        || Confirm::new("Execute migrations?")
+            .with_default(true)
+            .prompt()?
     {
         ssh::exec_ssh(
             user,
@@ -387,9 +394,10 @@ async fn perform_deployment(
         )?;
     }
 
-    if yes || Confirm::new("Execute schema-tool?")
-        .with_default(false)
-        .prompt()?
+    if ctx.yes
+        || Confirm::new("Execute schema-tool?")
+            .with_default(false)
+            .prompt()?
     {
         ssh::exec_ssh(
             user,
@@ -399,12 +407,15 @@ async fn perform_deployment(
     }
 
     // 9. COPS Integration
-    if env.cops_integration.unwrap_or(false) {
+    if ctx.env.cops_integration.unwrap_or(false) {
         ui::info("Executing COPS integration...");
 
         if let Err(e) = ssh::exec_ssh(user, domain, &format!("{} cops:outdated", console_new)) {
-            if yes {
-                return Err(anyhow!("COPS outdated check failed: {}. Deployment aborted.", e));
+            if ctx.yes {
+                return Err(anyhow!(
+                    "COPS outdated check failed: {}. Deployment aborted.",
+                    e
+                ));
             }
             ui::warning(format!("COPS outdated command failed: {}", e));
             if !Confirm::new("Do you want to continue deployment despite COPS command failure?")
@@ -424,8 +435,11 @@ async fn perform_deployment(
         }
 
         if let Err(e) = ssh::exec_ssh(user, domain, &format!("{} cops:permissions", console_new)) {
-            if yes {
-                return Err(anyhow!("COPS permissions check failed: {}. Deployment aborted.", e));
+            if ctx.yes {
+                return Err(anyhow!(
+                    "COPS permissions check failed: {}. Deployment aborted.",
+                    e
+                ));
             }
             ui::warning(format!("COPS permissions command failed: {}", e));
             if !Confirm::new("Do you want to continue deployment despite COPS command failure?")
@@ -447,14 +461,20 @@ async fn perform_deployment(
 
     // 10. Hooks: post_deploy_hook
     execute_hook(
-        project_dir,
-        env_name,
+        ctx.project_dir,
+        ctx.env_name,
         "post_deploy_hook",
-        vec![user, domain, server_root, release_dir, &console_new],
+        vec![
+            user,
+            domain,
+            ctx.server_root,
+            ctx.release_dir,
+            &console_new,
+        ],
     )?;
 
     ui::info("Basic deployment done. You can now run custom commands on the server.");
-    if !yes {
+    if !ctx.yes {
         ui::info("Press ENTER to continue and finish deployment...");
         let mut input = String::new();
         std::io::stdin().read_line(&mut input)?;
@@ -475,16 +495,16 @@ async fn perform_deployment(
         domain,
         &format!(
             "rm -f {}/current && ln -s releases/{} {}/current",
-            server_root, release_dir, server_root
+            ctx.server_root, ctx.release_dir, ctx.server_root
         ),
     )?;
 
     // 13. Shared paths
     ui::info("Handling shared paths...");
-    if let Some(dirs) = &env.shared_directories {
+    if let Some(dirs) = &ctx.env.shared_directories {
         for dir in dirs {
-            let shared_path = format!("{}/shared/{}", server_root, dir);
-            let target_path = format!("{}/current/{}", server_root, dir);
+            let shared_path = format!("{}/shared/{}", ctx.server_root, dir);
+            let target_path = format!("{}/current/{}", ctx.server_root, dir);
             ssh::exec_ssh(user, domain, &format!("mkdir -p {}", shared_path))?;
             ssh::exec_ssh(
                 user,
@@ -496,10 +516,10 @@ async fn perform_deployment(
             )?;
         }
     }
-    if let Some(files) = &env.shared_files {
+    if let Some(files) = &ctx.env.shared_files {
         for file in files {
-            let shared_path = format!("{}/shared/{}", server_root, file);
-            let target_path = format!("{}/current/{}", server_root, file);
+            let shared_path = format!("{}/shared/{}", ctx.server_root, file);
+            let target_path = format!("{}/current/{}", ctx.server_root, file);
             let shared_dir = Path::new(&shared_path).parent().unwrap().to_string_lossy();
             ssh::exec_ssh(user, domain, &format!("mkdir -p {}", shared_dir))?;
             ssh::exec_ssh(user, domain, &format!("touch {}", shared_path))?;
@@ -520,10 +540,16 @@ async fn perform_deployment(
 
     // 15. Hooks: done_deploy_hook
     execute_hook(
-        project_dir,
-        env_name,
+        ctx.project_dir,
+        ctx.env_name,
         "done_deploy_hook",
-        vec![user, domain, server_root, release_dir, &console_new],
+        vec![
+            user,
+            domain,
+            ctx.server_root,
+            ctx.release_dir,
+            &console_new,
+        ],
     )?;
 
     Ok(())

@@ -86,9 +86,10 @@ impl DeployConfig {
 
         // Ensure parent directory exists if we're creating in .docker-control
         if let Some(parent) = config_file.parent()
-            && !parent.exists() {
-                fs::create_dir_all(parent)?;
-            }
+            && !parent.exists()
+        {
+            fs::create_dir_all(parent)?;
+        }
 
         let content = serde_json::to_string_pretty(self)?;
         fs::write(&config_file, content)?;

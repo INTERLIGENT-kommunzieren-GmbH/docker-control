@@ -1,4 +1,4 @@
-use docker_control::git::{compare_versions, GitService, is_release_branch_name};
+use docker_control::git::{GitService, compare_versions, is_release_branch_name};
 use git2::{BranchType, Repository};
 use std::fs;
 use std::path::Path;

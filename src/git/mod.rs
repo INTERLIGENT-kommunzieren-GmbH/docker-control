@@ -43,9 +43,10 @@ impl GitService {
         for branch in local_branches {
             let (branch, _) = branch?;
             if let Some(name) = branch.name()?
-                && is_release_branch_name(name) {
-                    branches.push(name.to_string());
-                }
+                && is_release_branch_name(name)
+            {
+                branches.push(name.to_string());
+            }
         }
 
         // Also check remote branches
@@ -56,10 +57,10 @@ impl GitService {
                 // Strip remote prefix (e.g., origin/)
                 if let Some(short_name) = name.split('/').next_back()
                     && is_release_branch_name(short_name)
-                        && !branches.contains(&short_name.to_string())
-                    {
-                        branches.push(short_name.to_string());
-                    }
+                    && !branches.contains(&short_name.to_string())
+                {
+                    branches.push(short_name.to_string());
+                }
             }
         }
 
@@ -303,16 +304,17 @@ impl GitService {
                 for sub_entry in std::fs::read_dir(&path)? {
                     let sub_entry = sub_entry?;
                     let sub_path = sub_entry.path();
-                    if sub_path.is_dir() && sub_path.join(".git").exists()
+                    if sub_path.is_dir()
+                        && sub_path.join(".git").exists()
                         && let (Some(vendor), Some(module)) =
                             (path.file_name(), sub_path.file_name())
-                        {
-                            modules.push(format!(
-                                "{}/{}",
-                                vendor.to_string_lossy(),
-                                module.to_string_lossy()
-                            ));
-                        }
+                    {
+                        modules.push(format!(
+                            "{}/{}",
+                            vendor.to_string_lossy(),
+                            module.to_string_lossy()
+                        ));
+                    }
                 }
             }
         }
@@ -336,10 +338,11 @@ impl GitService {
 
         for filename in &["CHANGELOG.md", "changelog.md", "CHANGELOG"] {
             if let Ok(entry) = tree.get_path(Path::new(filename))
-                && let Ok(blob) = self.repo.find_blob(entry.id()) {
-                    let content = String::from_utf8_lossy(blob.content());
-                    return content.lines().take(20).collect::<Vec<_>>().join("\n");
-                }
+                && let Ok(blob) = self.repo.find_blob(entry.id())
+            {
+                let content = String::from_utf8_lossy(blob.content());
+                return content.lines().take(20).collect::<Vec<_>>().join("\n");
+            }
         }
 
         format!("No changelog available for release {}", release)
@@ -354,7 +357,9 @@ impl GitService {
                 if let Ok(local_branch) = self.repo.find_branch(b, BranchType::Local) {
                     Some(local_branch)
                 } else {
-                    self.repo.find_branch(&format!("origin/{}", b), BranchType::Remote).ok()
+                    self.repo
+                        .find_branch(&format!("origin/{}", b), BranchType::Remote)
+                        .ok()
                 }
             } else {
                 // We want to create a new branch 'name' based on 'b'
@@ -535,4 +540,3 @@ impl<'a> Drop for WorktreeCleanup<'a> {
         }
     }
 }
-

@@ -4,7 +4,9 @@ members = ["cargo:."]
 [dist]
 cargo-dist-version = "0.31.0"
 ci = "github"
-installers = []
+installers = ["homebrew"]
+tap = "INTERLIGENT-kommunzieren-GmbH/homebrew-docker-control"
+publish-jobs = ["homebrew"]
 targets = [
     "aarch64-apple-darwin",
     "aarch64-unknown-linux-gnu",

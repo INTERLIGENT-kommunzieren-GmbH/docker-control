@@ -1,6 +1,6 @@
-use crate::git::{get_docker_user_id, CleanupMode, GitService, WorktreeCleanup};
+use crate::git::{CleanupMode, GitService, WorktreeCleanup, get_docker_user_id};
 use crate::ui;
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use inquire::{Confirm, Select};
 use serde_json::Value;
 use std::fs;
@@ -54,11 +54,7 @@ impl Default for ReleaseOptions {
     }
 }
 
-pub fn execute(
-    project_dir: &Path,
-    module: Option<String>,
-    options: ReleaseOptions,
-) -> Result<()> {
+pub fn execute(project_dir: &Path, module: Option<String>, options: ReleaseOptions) -> Result<()> {
     let mut selected_module = module;
 
     // Module selection logic
@@ -354,8 +350,8 @@ fn execute_composer_install(
         .map(|l| l.split('=').nth(1).unwrap_or("8.2"))
         .unwrap_or("8.2");
 
-    let ssh_auth_port = std::env::var("SSH_AUTH_PORT")
-        .unwrap_or_else(|_| "host.docker.internal:2222".to_string());
+    let ssh_auth_port =
+        std::env::var("SSH_AUTH_PORT").unwrap_or_else(|_| "host.docker.internal:2222".to_string());
 
     let status = Command::new("docker")
         .arg("run")

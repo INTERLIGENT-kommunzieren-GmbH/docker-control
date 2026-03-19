@@ -6,7 +6,7 @@ use daemonize::Daemonize;
 use std::path::PathBuf;
 use tokio::signal;
 
-use docker_control::{assets, commands, docker, ui, utils, SSH_AGENT_PORT};
+use docker_control::{SSH_AGENT_PORT, assets, commands, docker, ui, utils};
 
 #[derive(Parser)]
 #[command(name = "docker-control")]
@@ -311,7 +311,10 @@ async fn async_main() -> anyhow::Result<()> {
 
                 // Set SSH_AUTH_PORT
                 unsafe {
-                    std::env::set_var("SSH_AUTH_PORT", format!("{}:{}", platform_info.bind_ip, SSH_AGENT_PORT));
+                    std::env::set_var(
+                        "SSH_AUTH_PORT",
+                        format!("{}:{}", platform_info.bind_ip, SSH_AGENT_PORT),
+                    );
                 }
 
                 ui::info("SSH agent forwarding started in daemon mode.");
@@ -353,7 +356,9 @@ async fn async_main() -> anyhow::Result<()> {
     ui::debug(format!("Platform detected: {:?}", platform_info.platform));
 
     // Ensure SSH agent forwarding is running
-    if std::env::var("DOCKER_CONTROL_SKIP_SSH_AGENT").is_err() && !utils::forwarding::is_port_open(&platform_info.bind_ip, SSH_AGENT_PORT) {
+    if std::env::var("DOCKER_CONTROL_SKIP_SSH_AGENT").is_err()
+        && !utils::forwarding::is_port_open(&platform_info.bind_ip, SSH_AGENT_PORT)
+    {
         ui::info("Starting SSH agent forwarding daemon...");
         // Spawn the daemon
         if let Ok(exe) = std::env::current_exe() {
@@ -421,14 +426,23 @@ async fn async_main() -> anyhow::Result<()> {
         Commands::CreateControlScript { name } => {
             commands::create_script::execute(&project_dir, &name)?;
         }
-        Commands::Deploy { env, release, maintenance_mode, yes } => {
+        Commands::Deploy {
+            env,
+            release,
+            maintenance_mode,
+            yes,
+        } => {
             commands::deploy::execute(&project_dir, env, release, maintenance_mode, yes).await?;
         }
         Commands::Init => {
             commands::init::execute(&project_dir).await?;
         }
         Commands::Merge { module } => {
-            commands::merge::execute(&project_dir, module, commands::merge::MergeOptions::default())?;
+            commands::merge::execute(
+                &project_dir,
+                module,
+                commands::merge::MergeOptions::default(),
+            )?;
         }
         Commands::Pull => {
             check_managed(&project_dir);
@@ -438,7 +452,11 @@ async fn async_main() -> anyhow::Result<()> {
             docker::execute_ingress_compose(&["pull"])?;
         }
         Commands::Release { module } => {
-            commands::release::execute(&project_dir, module, commands::release::ReleaseOptions::default())?;
+            commands::release::execute(
+                &project_dir,
+                module,
+                commands::release::ReleaseOptions::default(),
+            )?;
         }
         Commands::Restart => {
             check_managed(&project_dir);

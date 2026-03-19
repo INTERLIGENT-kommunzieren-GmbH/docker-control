@@ -1,6 +1,6 @@
 use crate::git::{CleanupMode, GitService, WorktreeCleanup};
 use crate::ui;
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use inquire::{Confirm, Select};
 use std::path::Path;
 use std::process::{Command, Stdio};
@@ -25,9 +25,12 @@ impl MergePromptProvider for InteractiveMergePromptProvider {
     }
 
     fn confirm_cherry_pick(&self, count: usize) -> Result<bool> {
-        Ok(Confirm::new(&format!("Proceed with cherry-picking these {} commits?", count))
-            .with_default(true)
-            .prompt()?)
+        Ok(Confirm::new(&format!(
+            "Proceed with cherry-picking these {} commits?",
+            count
+        ))
+        .with_default(true)
+        .prompt()?)
     }
 
     fn select_conflict_resolution(&self) -> Result<String> {
@@ -40,9 +43,11 @@ impl MergePromptProvider for InteractiveMergePromptProvider {
     }
 
     fn confirm_push(&self, branch: &str) -> Result<bool> {
-        Ok(Confirm::new(&format!("Push merge branch {} to remote?", branch))
-            .with_default(true)
-            .prompt()?)
+        Ok(
+            Confirm::new(&format!("Push merge branch {} to remote?", branch))
+                .with_default(true)
+                .prompt()?,
+        )
     }
 }
 
@@ -60,11 +65,7 @@ impl Default for MergeOptions {
     }
 }
 
-pub fn execute(
-    project_dir: &Path,
-    module: Option<String>,
-    options: MergeOptions,
-) -> Result<()> {
+pub fn execute(project_dir: &Path, module: Option<String>, options: MergeOptions) -> Result<()> {
     let mut selected_module = module;
 
     // Module selection logic

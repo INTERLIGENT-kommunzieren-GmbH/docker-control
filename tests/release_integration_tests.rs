@@ -1,8 +1,8 @@
 mod common;
 
-use common::TestRepo;
-use docker_control::commands::release::{execute, PromptProvider, ReleaseOptions};
 use anyhow::Result;
+use common::TestRepo;
+use docker_control::commands::release::{PromptProvider, ReleaseOptions, execute};
 use std::fs;
 
 struct MockPromptProvider {
@@ -20,10 +20,16 @@ impl PromptProvider for MockPromptProvider {
         Ok(self.feature)
     }
     fn select_patch_branch(&self, _branches: Vec<String>) -> Result<String> {
-        Ok(self.patch_branch.clone().unwrap_or_else(|| "1.0.x".to_string()))
+        Ok(self
+            .patch_branch
+            .clone()
+            .unwrap_or_else(|| "1.0.x".to_string()))
     }
     fn select_module(&self, _modules: Vec<String>) -> Result<String> {
-        Ok(self.module.clone().unwrap_or_else(|| "Main Project".to_string()))
+        Ok(self
+            .module
+            .clone()
+            .unwrap_or_else(|| "Main Project".to_string()))
     }
 }
 
@@ -57,7 +63,7 @@ fn test_initial_release_with_changelog() -> Result<()> {
 fn test_major_release_with_changelog() -> Result<()> {
     let repo = TestRepo::new("major")?;
     repo.setup_basic_project()?;
-    
+
     // Create initial release branch and push it to origin
     let htdocs = repo.root.join("htdocs");
     TestRepo::git_run(&htdocs, &["branch", "1.0.x"])?;
@@ -125,7 +131,7 @@ fn test_minor_release_with_changelog() -> Result<()> {
 fn test_patch_release_with_changelog() -> Result<()> {
     let repo = TestRepo::new("patch")?;
     repo.setup_basic_project()?;
-    
+
     // Setup existing release branch and a tag
     let htdocs = repo.root.join("htdocs");
     TestRepo::git_run(&htdocs, &["branch", "1.0.x"])?;
@@ -164,7 +170,7 @@ fn test_patch_release_with_changelog() -> Result<()> {
 fn test_vendor_module_release() -> Result<()> {
     let repo = TestRepo::new("vendor")?;
     repo.setup_basic_project()?;
-    
+
     // Setup a vendor module with its own origin
     let temp_parent = repo.root.parent().unwrap();
     let vendor_origin = temp_parent.join("vendor_origin.git");
@@ -176,9 +182,15 @@ fn test_vendor_module_release() -> Result<()> {
     TestRepo::git_run(&vendor_path, &["init", "--initial-branch=main"])?;
     TestRepo::git_run(&vendor_path, &["config", "user.email", "test@example.com"])?;
     TestRepo::git_run(&vendor_path, &["config", "user.name", "Test User"])?;
-    TestRepo::git_run(&vendor_path, &["remote", "add", "origin", &vendor_origin.to_string_lossy()])?;
-    
-    fs::write(vendor_path.join("composer.json"), r#"{"name": "test/module", "version": "1.0.0"}"#)?;
+    TestRepo::git_run(
+        &vendor_path,
+        &["remote", "add", "origin", &vendor_origin.to_string_lossy()],
+    )?;
+
+    fs::write(
+        vendor_path.join("composer.json"),
+        r#"{"name": "test/module", "version": "1.0.0"}"#,
+    )?;
     TestRepo::git_run(&vendor_path, &["add", "."])?;
     TestRepo::git_run(&vendor_path, &["commit", "-m", "Initial vendor commit"])?;
     TestRepo::git_run(&vendor_path, &["push", "origin", "main"])?;
@@ -208,7 +220,7 @@ fn repo_list_branches(path: &std::path::Path) -> Result<Vec<String>> {
         .args(&["branch", "--format=%(refname:short)"])
         .current_dir(path)
         .output()?;
-    
+
     let branches = String::from_utf8(output.stdout)?
         .lines()
         .map(|s| s.to_string())

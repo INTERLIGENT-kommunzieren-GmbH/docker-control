@@ -49,9 +49,10 @@ pub async fn get_summary(project_dir: &Path) -> String {
             let mut git_info = format!("Git: {}", branch);
             if let Ok(repo) = git2::Repository::open(&git_path)
                 && let Ok(statuses) = repo.statuses(None)
-                    && !statuses.is_empty() {
-                        git_info.push('*');
-                    }
+                && !statuses.is_empty()
+            {
+                git_info.push('*');
+            }
             summary.push(git_info);
         } else {
             summary.push("Git: Unknown".to_string());
@@ -136,9 +137,10 @@ fn show_git_status(project_dir: &Path) {
                 // Check for dirty state
                 if let Ok(repo) = git2::Repository::open(&git_path)
                     && let Ok(statuses) = repo.statuses(None)
-                        && !statuses.is_empty() {
-                            status_msg.push_str(" (uncommitted changes)");
-                        }
+                    && !statuses.is_empty()
+                {
+                    status_msg.push_str(" (uncommitted changes)");
+                }
 
                 ui::success(format!("  Git Repository: ✓ Initialized ({})", status_msg));
             }
@@ -203,8 +205,6 @@ async fn show_docker_status(project_dir: &Path) {
                     if let Some(labels) = &c.labels {
                         let plugin_dir = labels.get("com.interligent.dockerplugin.dir");
                         let compose_dir = labels.get("com.docker.compose.project.working_dir");
-
-                        
 
                         if let Some(d) = compose_dir {
                             d.trim_end_matches('/') == project_dir_trimmed

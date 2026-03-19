@@ -1,8 +1,8 @@
 mod common;
 
-use common::TestRepo;
-use docker_control::commands::merge::{execute, MergePromptProvider, MergeOptions};
 use anyhow::Result;
+use common::TestRepo;
+use docker_control::commands::merge::{MergeOptions, MergePromptProvider, execute};
 use std::process::Command;
 
 struct MockMergePromptProvider {
@@ -15,7 +15,10 @@ struct MockMergePromptProvider {
 
 impl MergePromptProvider for MockMergePromptProvider {
     fn select_module(&self, _modules: Vec<String>) -> Result<String> {
-        Ok(self.module.clone().unwrap_or_else(|| "Main Project".to_string()))
+        Ok(self
+            .module
+            .clone()
+            .unwrap_or_else(|| "Main Project".to_string()))
     }
     fn select_release_branch(&self, _branches: Vec<String>) -> Result<String> {
         Ok(self.release_branch.clone())
@@ -35,9 +38,9 @@ impl MergePromptProvider for MockMergePromptProvider {
 fn test_successful_merge() -> Result<()> {
     let repo = TestRepo::new("merge_success")?;
     repo.setup_basic_project()?;
-    
+
     let htdocs = repo.root.join("htdocs");
-    
+
     // Create release branch and add commits
     TestRepo::git_run(&htdocs, &["checkout", "-b", "1.0.x"])?;
     repo.write_file("htdocs/feature1.txt", "content1")?;
@@ -45,7 +48,7 @@ fn test_successful_merge() -> Result<()> {
     repo.write_file("htdocs/feature2.txt", "content2")?;
     repo.commit_all("feat: feature 2")?;
     TestRepo::git_run(&htdocs, &["push", "origin", "1.0.x"])?;
-    
+
     // Go back to main
     TestRepo::git_run(&htdocs, &["checkout", "main"])?;
 
@@ -69,7 +72,7 @@ fn test_successful_merge() -> Result<()> {
     // Verify commits were cherry-picked (should have 2 commits ahead of origin/main on the merge branch)
     // We can't easily check local branch because it's deleted after push in the command logic
     // but we can check the remote origin.
-    
+
     Ok(())
 }
 
@@ -77,7 +80,7 @@ fn test_successful_merge() -> Result<()> {
 fn test_merge_vendor_module() -> Result<()> {
     let repo = TestRepo::new("merge_vendor")?;
     repo.setup_basic_project()?;
-    
+
     // Setup vendor module
     let temp_parent = repo.root.parent().unwrap();
     let vendor_origin = temp_parent.join("vendor_origin.git");
@@ -89,9 +92,15 @@ fn test_merge_vendor_module() -> Result<()> {
     TestRepo::git_run(&vendor_path, &["init", "--initial-branch=main"])?;
     TestRepo::git_run(&vendor_path, &["config", "user.email", "test@example.com"])?;
     TestRepo::git_run(&vendor_path, &["config", "user.name", "Test User"])?;
-    TestRepo::git_run(&vendor_path, &["remote", "add", "origin", &vendor_origin.to_string_lossy()])?;
-    
-    std::fs::write(vendor_path.join("composer.json"), r#"{"name": "test/module", "version": "1.0.0"}"#)?;
+    TestRepo::git_run(
+        &vendor_path,
+        &["remote", "add", "origin", &vendor_origin.to_string_lossy()],
+    )?;
+
+    std::fs::write(
+        vendor_path.join("composer.json"),
+        r#"{"name": "test/module", "version": "1.0.0"}"#,
+    )?;
     TestRepo::git_run(&vendor_path, &["add", "."])?;
     TestRepo::git_run(&vendor_path, &["commit", "-m", "Initial vendor commit"])?;
     TestRepo::git_run(&vendor_path, &["push", "origin", "main"])?;
@@ -128,7 +137,7 @@ fn repo_list_remote_branches(path: &std::path::Path) -> Result<Vec<String>> {
         .args(&["branch", "-r", "--format=%(refname:short)"])
         .current_dir(path)
         .output()?;
-    
+
     let branches = String::from_utf8(output.stdout)?
         .lines()
         .map(|s| s.to_string())
