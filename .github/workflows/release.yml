@@ -50,9 +50,6 @@ jobs:
     runs-on: "ubuntu-22.04"
     outputs:
       val: ${{ steps.plan.outputs.manifest }}
-      artifacts_matrix: ${{ steps.plan.outputs.artifacts_matrix }}
-      pr_run_mode: ${{ steps.plan.outputs.pr_run_mode }}
-      include_artifacts: ${{ steps.plan.outputs.include_artifacts }}
       tag: ${{ !github.event.pull_request && github.ref_name || '' }}
       tag-flag: ${{ !github.event.pull_request && format('--tag={0}', github.ref_name) || '' }}
       publishing: ${{ !github.event.pull_request }}
@@ -73,7 +70,7 @@ jobs:
         with:
           name: cargo-dist-cache
           path: ~/.cargo/bin/dist
-      # sure would be cool if GitHub gave us proper conditionals...
+      # sure would be cool if github gave us proper conditionals...
       # so here's a doubly-nested ternary-via-truthiness to try to provide the best possible
       # functionality based on whether this is a pull_request, and whether it's from a fork.
       # (PRs run on the *source* but secrets are usually on the *target* -- that's *good*
@@ -84,9 +81,6 @@ jobs:
           echo "dist ran successfully"
           cat plan-dist-manifest.json
           echo "manifest=$(jq -c "." plan-dist-manifest.json)" >> "$GITHUB_OUTPUT"
-          echo "artifacts_matrix=$(jq -c ".ci.github.artifacts_matrix" plan-dist-manifest.json)" >> "$GITHUB_OUTPUT"
-          echo "pr_run_mode=$(jq -r ".ci.github.pr_run_mode" plan-dist-manifest.json)" >> "$GITHUB_OUTPUT"
-          echo "include_artifacts=$(jq -c ".ci.github.artifacts_matrix.include" plan-dist-manifest.json)" >> "$GITHUB_OUTPUT"
       - name: "Upload dist-manifest.json"
         uses: actions/upload-artifact@v6
         with:
@@ -99,20 +93,20 @@ jobs:
     # Let the initial task tell us to not run (currently very blunt)
     needs:
       - plan
-    if: ${{ needs.plan.outputs.include_artifacts != null && (needs.plan.outputs.publishing == 'true' || needs.plan.outputs.pr_run_mode == 'upload') }}
+    if: ${{ fromJson(needs.plan.outputs.val).ci.github.artifacts_matrix.include != null && (needs.plan.outputs.publishing == 'true' || fromJson(needs.plan.outputs.val).ci.github.pr_run_mode == 'upload') }}
     strategy:
       fail-fast: false
       # Target platforms/runners are computed by dist in create-release.
       # Each member of the matrix has the following arguments:
       #
-      # - runner: the GitHub runner
+      # - runner: the github runner
       # - dist-args: cli flags to pass to dist
       # - install-dist: expression to run to install dist on the runner
       #
       # Typically there will be:
       # - 1 "global" task that builds universal installers
       # - N "local" tasks that build each platform's binaries and platform-specific installers
-      matrix: ${{ fromJSON(needs.plan.outputs.artifacts_matrix) }}
+      matrix: ${{ fromJson(needs.plan.outputs.val).ci.github.artifacts_matrix }}
     runs-on: ${{ matrix.runner }}
     container: ${{ matrix.container && matrix.container.image || null }}
     env:
@@ -152,9 +146,9 @@ jobs:
           echo "dist ran successfully"
       - id: cargo-dist
         name: Post-build
-        # We force bash here just because GitHub makes it really hard to get values up
+        # We force bash here just because github makes it really hard to get values up
         # to "real" actions without writing to env-vars, and writing to env-vars has
-        # inconsistent syntax between shell and PowerShell.
+        # inconsistent syntax between shell and powershell.
         shell: bash
         run: |
           # Parse out what we just built and upload it to scratch storage
@@ -230,9 +224,6 @@ jobs:
     runs-on: "ubuntu-22.04"
     outputs:
       val: ${{ steps.host.outputs.manifest }}
-      is_prerelease: ${{ steps.host.outputs.is_prerelease }}
-      title: ${{ steps.host.outputs.title }}
-      body: ${{ steps.host.outputs.body }}
     steps:
       - uses: actions/checkout@v6
         with:
@@ -258,9 +249,6 @@ jobs:
           echo "artifacts uploaded and released successfully"
           cat dist-manifest.json
           echo "manifest=$(jq -c "." dist-manifest.json)" >> "$GITHUB_OUTPUT"
-          echo "is_prerelease=$(jq -r ".announcement_is_prerelease" dist-manifest.json)" >> "$GITHUB_OUTPUT"
-          echo "title=$(jq -r ".announcement_title" dist-manifest.json)" >> "$GITHUB_OUTPUT"
-          echo "body=$(jq -r ".announcement_github_body" dist-manifest.json)" >> "$GITHUB_OUTPUT"
       - name: "Upload dist-manifest.json"
         uses: actions/upload-artifact@v6
         with:
@@ -280,9 +268,9 @@ jobs:
           rm -f artifacts/*-dist-manifest.json
       - name: Create GitHub Release
         env:
-          PRERELEASE_FLAG: "${{ needs.host.outputs.is_prerelease == 'true' && '--prerelease' || '' }}"
-          ANNOUNCEMENT_TITLE: "${{ needs.host.outputs.title }}"
-          ANNOUNCEMENT_BODY: "${{ needs.host.outputs.body }}"
+          PRERELEASE_FLAG: "${{ fromJson(steps.host.outputs.manifest).announcement_is_prerelease && '--prerelease' || '' }}"
+          ANNOUNCEMENT_TITLE: "${{ fromJson(steps.host.outputs.manifest).announcement_title }}"
+          ANNOUNCEMENT_BODY: "${{ fromJson(steps.host.outputs.manifest).announcement_github_body }}"
           RELEASE_COMMIT: "${{ github.sha }}"
         run: |
           # Write and read notes from a file to avoid quoting breaking things
@@ -290,14 +278,61 @@ jobs:
 
           gh release create "${{ needs.plan.outputs.tag }}" --target "$RELEASE_COMMIT" $PRERELEASE_FLAG --title "$ANNOUNCEMENT_TITLE" --notes-file "$RUNNER_TEMP/notes.txt" artifacts/*
 
+  publish-homebrew-formula:
+    needs:
+      - plan
+      - host
+    runs-on: "ubuntu-22.04"
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      PLAN: ${{ needs.plan.outputs.val }}
+      GITHUB_USER: "axo bot"
+      GITHUB_EMAIL: "admin+bot@axo.dev"
+    if: ${{ !fromJson(needs.plan.outputs.val).announcement_is_prerelease || fromJson(needs.plan.outputs.val).publish_prereleases }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: true
+          repository: "INTERLIGENT-kommunzieren-GmbH/homebrew-docker-control"
+          token: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+      # So we have access to the formula
+      - name: Fetch homebrew formulae
+        uses: actions/download-artifact@v7
+        with:
+          pattern: artifacts-*
+          path: Formula/
+          merge-multiple: true
+      # This is extra complex because you can make your Formula name not match your app name
+      # so we need to find releases with a *.rb file, and publish with that filename.
+      - name: Commit formula files
+        run: |
+          git config --global user.name "${GITHUB_USER}"
+          git config --global user.email "${GITHUB_EMAIL}"
+
+          for release in $(echo "$PLAN" | jq --compact-output '.releases[] | select([.artifacts[] | endswith(".rb")] | any)'); do
+            filename=$(echo "$release" | jq '.artifacts[] | select(endswith(".rb"))' --raw-output)
+            name=$(echo "$filename" | sed "s/\.rb$//")
+            version=$(echo "$release" | jq .app_version --raw-output)
+
+            export PATH="/home/linuxbrew/.linuxbrew/bin:$PATH"
+            brew update
+            # We avoid reformatting user-provided data such as the app description and homepage.
+            brew style --except-cops FormulaAudit/Homepage,FormulaAudit/Desc,FormulaAuditStrict --fix "Formula/${filename}" || true
+
+            git add "Formula/${filename}"
+            git commit -m "${name} ${version}"
+          done
+          git push
+
   announce:
     needs:
       - plan
       - host
+      - publish-homebrew-formula
     # use "always() && ..." to allow us to wait for all publish jobs while
     # still allowing individual publish jobs to skip themselves (for prereleases).
     # "host" however must run to completion, no skipping allowed!
-    if: ${{ always() && needs.host.result == 'success' }}
+    if: ${{ always() && needs.host.result == 'success' && (needs.publish-homebrew-formula.result == 'skipped' || needs.publish-homebrew-formula.result == 'success') }}
     runs-on: "ubuntu-22.04"
     env:
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
