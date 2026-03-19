@@ -58,12 +58,57 @@ impl TestRepo {
         Ok(())
     }
 
+    #[allow(dead_code)]
     pub fn setup_basic_project(&self) -> Result<()> {
         let htdocs = self.root.join("htdocs");
         self.write_file("htdocs/composer.json", r#"{"name": "test/project", "version": "1.0.0"}"#)?;
         self.write_file(".env", "PHP_VERSION=8.2")?;
         
         self.commit_all("Initial commit")?;
+        Self::git_run(&htdocs, &["push", "origin", "main"])?;
+        
+        Ok(())
+    }
+
+    #[allow(dead_code)]
+    pub fn setup_mezzio_project(&self) -> Result<()> {
+        let htdocs = self.root.join("htdocs");
+        
+        // Simplified composer.json that works with PHP 8.2
+        let composer_json = r#"{
+    "name": "test/mezzio-project",
+    "description": "Mezzio project for testing",
+    "type": "project",
+    "license": "BSD-3-Clause",
+    "require": {
+        "php": ">=8.2",
+        "psr/http-message": "^2.0"
+    }
+}"#;
+        self.write_file("htdocs/composer.json", composer_json)?;
+        self.write_file("htdocs/.gitignore", "vendor/\n")?;
+        self.write_file(".env", "PHP_VERSION=8.2\nPROJECTNAME=test-mezzio")?;
+
+        // Create a dummy public/index.php
+        self.write_file("htdocs/public/index.php", "<?php echo 'Hello Mezzio';")?;
+
+        // Run composer install via docker
+        let status = Command::new("docker")
+            .arg("run")
+            .arg("--rm")
+            .arg("-v")
+            .arg(format!("{}:/var/www/html", htdocs.display()))
+            .arg("fduarte42/docker-php:8.2")
+            .arg("bash")
+            .arg("-c")
+            .arg("git config --global --add safe.directory /var/www/html && composer install --no-interaction")
+            .status()?;
+
+        if !status.success() {
+            return Err(anyhow::anyhow!("Composer install via docker failed"));
+        }
+        
+        self.commit_all("Initial Mezzio commit")?;
         Self::git_run(&htdocs, &["push", "origin", "main"])?;
         
         Ok(())

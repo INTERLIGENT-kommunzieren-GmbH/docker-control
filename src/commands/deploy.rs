@@ -8,7 +8,13 @@ use std::fs;
 use std::path::Path;
 use std::process::Command;
 
-pub async fn execute(project_dir: &Path, env_name: String) -> Result<()> {
+pub async fn execute(
+    project_dir: &Path,
+    env_name: String,
+    release: Option<String>,
+    maintenance_mode: String,
+    yes: bool,
+) -> Result<()> {
     ui::info(format!("Preparing deployment to: {}", env_name));
 
     let config = DeployConfig::load(project_dir)?;
@@ -20,35 +26,41 @@ pub async fn execute(project_dir: &Path, env_name: String) -> Result<()> {
     let git_path = project_dir.join("htdocs");
     let git = GitService::open(&git_path)?;
 
-    ui::info("Fetching available releases...");
-    // Fetch tags to ensure we have the latest
-    if let Err(e) = git.fetch_tags() {
-        ui::warning(format!("Git fetch tags failed: {}. Continuing anyway.", e));
-    }
+    let release = if let Some(r) = release {
+        r
+    } else {
+        ui::info("Fetching available releases...");
+        // Fetch tags to ensure we have the latest
+        if let Err(e) = git.fetch_tags() {
+            ui::warning(format!("Git fetch tags failed: {}. Continuing anyway.", e));
+        }
 
-    let tags = git.list_tags()?;
-    if tags.is_empty() {
-        return Err(anyhow!(
-            "No tags found in repository. Please create a release first."
-        ));
-    }
+        let tags = git.list_tags()?;
+        if tags.is_empty() {
+            return Err(anyhow!(
+                "No tags found in repository. Please create a release first."
+            ));
+        }
 
-    let release = Select::new("Select release to deploy", tags).prompt()?;
+        Select::new("Select release to deploy", tags).prompt()?
+    };
     ui::info(format!("Selected release: {}", release));
 
     let project_name = get_project_name(project_dir);
     let changelog = git.get_changelog(&release);
 
     // Confirm deployment
-    if !Confirm::new(&format!(
-        "Proceed with deployment of '{}' to '{}' environment?",
-        release, env_name
-    ))
-    .with_default(false)
-    .prompt()?
-    {
-        ui::info("Deployment cancelled");
-        return Ok(());
+    if !yes {
+        if !Confirm::new(&format!(
+            "Proceed with deployment of '{}' to '{}' environment?",
+            release, env_name
+        ))
+        .with_default(false)
+        .prompt()?
+        {
+            ui::info("Deployment cancelled");
+            return Ok(());
+        }
     }
 
     // Teams notification: started
@@ -101,6 +113,8 @@ pub async fn execute(project_dir: &Path, env_name: String) -> Result<()> {
         &archive_path,
         &release_dir,
         server_root,
+        maintenance_mode,
+        yes,
     )
     .await
     {
@@ -228,7 +242,7 @@ async fn create_deployment_archive(
         .arg(format!("fduarte42/docker-php:{}", php_version))
         .arg("bash")
         .arg("-c")
-        .arg("/docker-php-init; composer i -o");
+        .arg("git config --global --add safe.directory /var/www/html; /docker-php-init; composer i -o");
 
     let status = docker_cmd.status()?;
     if !status.success() {
@@ -258,6 +272,8 @@ async fn perform_deployment(
     archive_path: &Path,
     release_dir: &str,
     server_root: &str,
+    maintenance_mode: String,
+    yes: bool,
 ) -> Result<()> {
     let user = &env.user;
     let domain = &env.domain;
@@ -299,9 +315,14 @@ async fn perform_deployment(
     let _ = ssh::exec_ssh(user, domain, "sudo php-fpm-reload.sh");
 
     // 6. Maintenance mode selection and activation
-    let maintenance_mode = Select::new("Select maintenance mode", vec!["hard", "soft"])
-        .with_starting_cursor(0)
-        .prompt()?;
+    let maintenance_mode = if yes {
+        maintenance_mode
+    } else {
+        Select::new("Select maintenance mode", vec!["hard", "soft"])
+            .with_starting_cursor(if maintenance_mode == "soft" { 1 } else { 0 })
+            .prompt()?
+            .to_string()
+    };
     ui::info(format!("Enabling maintenance mode ({})", maintenance_mode));
 
     let console_current = format!("php {}/current/public/index.php", server_root);
@@ -344,7 +365,7 @@ async fn perform_deployment(
         &format!("{} orm:clear-cache:query", console_new),
     )?;
 
-    if Confirm::new("Clear result cache?")
+    if yes || Confirm::new("Clear result cache?")
         .with_default(false)
         .prompt()?
     {
@@ -355,7 +376,7 @@ async fn perform_deployment(
         )?;
     }
 
-    if Confirm::new("Execute migrations?")
+    if yes || Confirm::new("Execute migrations?")
         .with_default(true)
         .prompt()?
     {
@@ -366,7 +387,7 @@ async fn perform_deployment(
         )?;
     }
 
-    if Confirm::new("Execute schema-tool?")
+    if yes || Confirm::new("Execute schema-tool?")
         .with_default(false)
         .prompt()?
     {
@@ -382,6 +403,9 @@ async fn perform_deployment(
         ui::info("Executing COPS integration...");
 
         if let Err(e) = ssh::exec_ssh(user, domain, &format!("{} cops:outdated", console_new)) {
+            if yes {
+                return Err(anyhow!("COPS outdated check failed: {}. Deployment aborted.", e));
+            }
             ui::warning(format!("COPS outdated command failed: {}", e));
             if !Confirm::new("Do you want to continue deployment despite COPS command failure?")
                 .with_default(false)
@@ -400,6 +424,9 @@ async fn perform_deployment(
         }
 
         if let Err(e) = ssh::exec_ssh(user, domain, &format!("{} cops:permissions", console_new)) {
+            if yes {
+                return Err(anyhow!("COPS permissions check failed: {}. Deployment aborted.", e));
+            }
             ui::warning(format!("COPS permissions command failed: {}", e));
             if !Confirm::new("Do you want to continue deployment despite COPS command failure?")
                 .with_default(false)
@@ -427,9 +454,11 @@ async fn perform_deployment(
     )?;
 
     ui::info("Basic deployment done. You can now run custom commands on the server.");
-    ui::info("Press ENTER to continue and finish deployment...");
-    let mut input = String::new();
-    std::io::stdin().read_line(&mut input)?;
+    if !yes {
+        ui::info("Press ENTER to continue and finish deployment...");
+        let mut input = String::new();
+        std::io::stdin().read_line(&mut input)?;
+    }
 
     // 11. Maintenance mode OFF (on new release)
     ui::info("Disabling maintenance mode...");

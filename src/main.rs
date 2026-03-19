@@ -61,6 +61,18 @@ enum Commands {
     Deploy {
         /// Target environment (e.g., production, staging)
         env: String,
+
+        /// Specific release to deploy (skips interactive selection)
+        #[arg(short, long)]
+        release: Option<String>,
+
+        /// Maintenance mode to use when --yes is specified (hard|soft)
+        #[arg(long, default_value = "hard")]
+        maintenance_mode: String,
+
+        /// Skip all interactive prompts
+        #[arg(short, long)]
+        yes: bool,
     },
     /// Initialize an empty directory with the project template
     Init,
@@ -183,10 +195,13 @@ fn main() {
 
     // Normal path
     let rt = tokio::runtime::Runtime::new().unwrap();
-    rt.block_on(async_main());
+    if let Err(e) = rt.block_on(async_main()) {
+        ui::critical(format!("Error: {}", e));
+        std::process::exit(1);
+    }
 }
 
-async fn async_main() {
+async fn async_main() -> anyhow::Result<()> {
     let cmd = Cli::command().styles(get_help_styles());
 
     let matches = cmd.get_matches();
@@ -249,7 +264,7 @@ async fn async_main() {
             .print_help()
             .unwrap();
         println!();
-        return;
+        return Ok(());
     }
 
     if let Some(Commands::Metadata) = cli.command {
@@ -260,16 +275,17 @@ async fn async_main() {
             "ShortDescription": "IK Docker Control CLI Plugin"
         });
         println!("{}", serde_json::to_string(&metadata).unwrap());
-        return;
+        return Ok(());
     }
 
     if cli.stop_ssh_agent {
         if let Err(e) = docker_control::utils::stop_ssh_agent() {
             ui::critical(format!("Failed to stop SSH agent: {}", e));
+            return Err(e);
         } else {
             ui::info("SSH agent forwarding stopped.");
         }
-        return;
+        return Ok(());
     }
 
     if cli.restart_ssh_agent {
@@ -290,7 +306,7 @@ async fn async_main() {
 
                 if let Err(e) = utils::forwarding::ensure_forwarding(&platform_info).await {
                     ui::critical(format!("Forwarding setup failed: {}", e));
-                    return;
+                    std::process::exit(1);
                 }
 
                 // Set SSH_AUTH_PORT
@@ -300,12 +316,13 @@ async fn async_main() {
 
                 ui::info("SSH agent forwarding started in daemon mode.");
                 signal::ctrl_c().await.unwrap();
+                std::process::exit(0);
             }
             Err(e) => {
                 ui::critical(format!("Failed to daemonize: {}", e));
+                return Err(anyhow::anyhow!("Failed to daemonize: {}", e));
             }
         }
-        return;
     }
 
     // Initialize assets
@@ -336,7 +353,7 @@ async fn async_main() {
     ui::debug(format!("Platform detected: {:?}", platform_info.platform));
 
     // Ensure SSH agent forwarding is running
-    if !utils::forwarding::is_port_open(&platform_info.bind_ip, SSH_AGENT_PORT) {
+    if std::env::var("DOCKER_CONTROL_SKIP_SSH_AGENT").is_err() && !utils::forwarding::is_port_open(&platform_info.bind_ip, SSH_AGENT_PORT) {
         ui::info("Starting SSH agent forwarding daemon...");
         // Spawn the daemon
         if let Ok(exe) = std::env::current_exe() {
@@ -377,18 +394,17 @@ async fn async_main() {
             // If no command is provided, show status and help summary
             if let Err(e) = commands::status::execute(&project_dir).await {
                 ui::critical(format!("Error showing status: {}", e));
+                return Err(e);
             }
             println!("\nRun 'docker control --help' for a list of available commands.");
-            return;
+            return Ok(());
         }
     };
 
     match command {
         Commands::Metadata => unreachable!(),
         Commands::AddDeployConfig => {
-            if let Err(e) = commands::add_deploy_config::execute(&project_dir) {
-                ui::critical(format!("Error: {}", e));
-            }
+            commands::add_deploy_config::execute(&project_dir)?;
         }
         Commands::Build { args } => {
             check_managed(&project_dir);
@@ -396,119 +412,77 @@ async fn async_main() {
             for arg in &args {
                 all_args.push(arg);
             }
-            if let Err(e) = docker::execute_compose(&project_dir, &all_args) {
-                ui::critical(format!("Error: {}", e));
-            }
+            docker::execute_compose(&project_dir, &all_args)?;
         }
         Commands::Console { container } => {
             check_managed(&project_dir);
-            if let Err(e) = docker::console(&project_dir, container) {
-                ui::critical(format!("Error: {}", e));
-            }
+            docker::console(&project_dir, container)?;
         }
         Commands::CreateControlScript { name } => {
-            if let Err(e) = commands::create_script::execute(&project_dir, &name) {
-                ui::critical(format!("Error: {}", e));
-            }
+            commands::create_script::execute(&project_dir, &name)?;
         }
-        Commands::Deploy { env } => {
-            if let Err(e) = commands::deploy::execute(&project_dir, env).await {
-                ui::critical(format!("Error: {}", e));
-            }
+        Commands::Deploy { env, release, maintenance_mode, yes } => {
+            commands::deploy::execute(&project_dir, env, release, maintenance_mode, yes).await?;
         }
         Commands::Init => {
-            if let Err(e) = commands::init::execute(&project_dir).await {
-                ui::critical(format!("Error: {}", e));
-            }
+            commands::init::execute(&project_dir).await?;
         }
         Commands::Merge { module } => {
-            if let Err(e) = commands::merge::execute(&project_dir, module, commands::merge::MergeOptions::default()) {
-                ui::critical(format!("Error: {}", e));
-            }
+            commands::merge::execute(&project_dir, module, commands::merge::MergeOptions::default())?;
         }
         Commands::Pull => {
             check_managed(&project_dir);
-            if let Err(e) = docker::execute_compose(&project_dir, &["pull"]) {
-                ui::critical(format!("Error: {}", e));
-            }
+            docker::execute_compose(&project_dir, &["pull"])?;
         }
         Commands::PullIngress => {
-            if let Err(e) = docker::execute_ingress_compose(&["pull"]) {
-                ui::critical(format!("Error: {}", e));
-            }
+            docker::execute_ingress_compose(&["pull"])?;
         }
         Commands::Release { module } => {
-            if let Err(e) = commands::release::execute(&project_dir, module, commands::release::ReleaseOptions::default()) {
-                ui::critical(format!("Error: {}", e));
-            }
+            commands::release::execute(&project_dir, module, commands::release::ReleaseOptions::default())?;
         }
         Commands::Restart => {
             check_managed(&project_dir);
-            if let Err(e) = docker::execute_compose(&project_dir, &["down"]) {
-                ui::critical(format!("Error: {}", e));
-            }
-            if let Err(e) = docker::execute_compose(&project_dir, &["up", "-d"]) {
-                ui::critical(format!("Error: {}", e));
-            }
+            docker::execute_compose(&project_dir, &["down"])?;
+            docker::execute_compose(&project_dir, &["up", "-d"])?;
         }
         Commands::RestartIngress => {
-            if let Err(e) = docker::execute_ingress_compose(&["down"]) {
-                ui::critical(format!("Error: {}", e));
-            }
-            if let Err(e) = docker::execute_ingress_compose(&["up", "-d"]) {
-                ui::critical(format!("Error: {}", e));
-            }
+            docker::execute_ingress_compose(&["down"])?;
+            docker::execute_ingress_compose(&["up", "-d"])?;
         }
         Commands::ShowRunning => {
-            if let Err(e) = commands::show_running::execute().await {
-                ui::critical(format!("Error: {}", e));
-            }
+            commands::show_running::execute().await?;
         }
         Commands::Start => {
             check_managed(&project_dir);
-            if let Err(e) = docker::execute_compose(&project_dir, &["up", "-d"]) {
-                ui::critical(format!("Error: {}", e));
-            }
+            docker::execute_compose(&project_dir, &["up", "-d"])?;
         }
         Commands::StartIngress => {
-            if let Err(e) = docker::execute_ingress_compose(&["up", "-d"]) {
-                ui::critical(format!("Error: {}", e));
-            }
+            docker::execute_ingress_compose(&["up", "-d"])?;
         }
         Commands::Status => {
-            if let Err(e) = commands::status::execute(&project_dir).await {
-                ui::critical(format!("Error: {}", e));
-            }
+            commands::status::execute(&project_dir).await?;
             // Also show docker compose ps as it was before
             let _ = docker::execute_compose(&project_dir, &["ps"]);
         }
         Commands::StatusIngress => {
-            if let Err(e) = docker::execute_ingress_compose(&["ps"]) {
-                ui::critical(format!("Error: {}", e));
-            }
+            docker::execute_ingress_compose(&["ps"])?;
         }
         Commands::Stop => {
             check_managed(&project_dir);
-            if let Err(e) = docker::execute_compose(&project_dir, &["stop"]) {
-                ui::critical(format!("Error: {}", e));
-            }
+            docker::execute_compose(&project_dir, &["stop"])?;
         }
         Commands::StopIngress => {
-            if let Err(e) = docker::execute_ingress_compose(&["stop"]) {
-                ui::critical(format!("Error: {}", e));
-            }
+            docker::execute_ingress_compose(&["stop"])?;
         }
         Commands::Update => {
-            if let Err(e) = commands::update::execute(&project_dir) {
-                ui::critical(format!("Error: {}", e));
-            }
+            commands::update::execute(&project_dir)?;
         }
         Commands::External(args) => {
-            if let Err(e) = execute_external_script(&project_dir, args) {
-                ui::critical(format!("Error: {}", e));
-            }
+            execute_external_script(&project_dir, args)?;
         }
     }
+
+    Ok(())
 }
 
 fn execute_external_script(project_dir: &std::path::Path, args: Vec<String>) -> anyhow::Result<()> {
