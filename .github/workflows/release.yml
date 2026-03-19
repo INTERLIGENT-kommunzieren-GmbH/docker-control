@@ -245,8 +245,8 @@ jobs:
       - id: host
         shell: bash
         run: |
-          dist host ${{ needs.plan.outputs.tag-flag }} --steps=upload --steps=release --output-format=json > dist-manifest.json
-          echo "artifacts uploaded and released successfully"
+          dist host ${{ needs.plan.outputs.tag-flag }} --steps=upload --output-format=json > dist-manifest.json
+          echo "artifacts uploaded successfully"
           cat dist-manifest.json
           echo "manifest=$(jq -c "." dist-manifest.json)" >> "$GITHUB_OUTPUT"
       - name: "Upload dist-manifest.json"
@@ -320,7 +320,7 @@ jobs:
             brew style --except-cops FormulaAudit/Homepage,FormulaAudit/Desc,FormulaAuditStrict --fix "Formula/${filename}" || true
 
             git add "Formula/${filename}"
-            git commit -m "${name} ${version}"
+            git commit -m "${name} ${version}" || echo "No changes for ${filename}"
           done
           git push
 
