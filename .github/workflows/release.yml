@@ -318,15 +318,10 @@ jobs:
             brew style --except-cops FormulaAudit/Homepage,FormulaAudit/Desc,FormulaAuditStrict --fix "Formula/${filename}" || true
 
             git add "Formula/${filename}"
-            if git commit -m "${name} ${version}"; then
-              echo "PUSH=true" >> "$GITHUB_ENV"
-            else
-              echo "No changes for ${filename}"
-            fi
+            git commit -m "${name} ${version}"
           done
-          if [[ "$PUSH" == "true" ]]; then
-            git push
-          fi
+          
+          git push origin main
 
   announce:
     needs:
