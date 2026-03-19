@@ -375,7 +375,13 @@ fn generate_changelog(
             let merge_base = git.get_merge_base(highest, base)?;
             git.get_commits_between_range(&format!("{}..{}", merge_base, base))?
         } else {
-            git.get_all_commits_from(base)?
+            // Fallback to latest tag if no release branches found
+            let tags = git.list_tags()?;
+            if let Some(last_tag) = tags.last() {
+                git.get_commits_between_range(&format!("{}..{}", last_tag, base))?
+            } else {
+                git.get_all_commits_from(base)?
+            }
         }
     } else {
         // For patch, between last tag and current branch
@@ -448,7 +454,8 @@ fn get_next_major(branches: &[String]) -> Result<String> {
     let latest = branches
         .last()
         .ok_or_else(|| anyhow!("No branches found"))?;
-    let parts: Vec<&str> = latest.split('.').collect();
+    let clean_latest = latest.strip_prefix('v').unwrap_or(latest);
+    let parts: Vec<&str> = clean_latest.split('.').collect();
     let major: u32 = parts[0].parse()?;
     Ok(format!("{}.0.x", major + 1))
 }
@@ -457,7 +464,8 @@ fn get_next_minor(branches: &[String]) -> Result<String> {
     let latest = branches
         .last()
         .ok_or_else(|| anyhow!("No branches found"))?;
-    let parts: Vec<&str> = latest.split('.').collect();
+    let clean_latest = latest.strip_prefix('v').unwrap_or(latest);
+    let parts: Vec<&str> = clean_latest.split('.').collect();
     let major: u32 = parts[0].parse()?;
     let minor: u32 = parts[1].parse()?;
     Ok(format!("{}.{}.x", major, minor + 1))

@@ -450,7 +450,7 @@ impl GitService {
     }
 }
 
-fn compare_versions(a: &str, b: &str) -> std::cmp::Ordering {
+pub fn compare_versions(a: &str, b: &str) -> std::cmp::Ordering {
     let a_clean = a.strip_prefix('v').unwrap_or(a);
     let b_clean = b.strip_prefix('v').unwrap_or(b);
 
@@ -478,9 +478,10 @@ fn compare_versions(a: &str, b: &str) -> std::cmp::Ordering {
     a_parts.len().cmp(&b_parts.len())
 }
 
-fn is_release_branch_name(name: &str) -> bool {
-    // Matches x.y.x pattern
-    let parts: Vec<&str> = name.split('.').collect();
+pub fn is_release_branch_name(name: &str) -> bool {
+    // Matches x.y.x or v.x.y.x pattern
+    let clean_name = name.strip_prefix('v').unwrap_or(name);
+    let parts: Vec<&str> = clean_name.split('.').collect();
     if parts.len() != 3 {
         return false;
     }

@@ -1,4 +1,4 @@
-use docker_control::git::GitService;
+use docker_control::git::{compare_versions, GitService, is_release_branch_name};
 use git2::{BranchType, Repository};
 use std::fs;
 use std::path::Path;
@@ -154,4 +154,28 @@ fn test_get_all_commits_from() {
 
     // Cleanup
     let _ = fs::remove_dir_all(&root);
+}
+
+#[test]
+fn test_is_release_branch_name() {
+    assert!(is_release_branch_name("1.0.x"));
+    assert!(is_release_branch_name("v1.0.x"));
+    assert!(is_release_branch_name("10.12.x"));
+    assert!(is_release_branch_name("v10.12.x"));
+    assert!(!is_release_branch_name("1.0"));
+    assert!(!is_release_branch_name("1.0.0"));
+    assert!(!is_release_branch_name("v1.0.0"));
+    assert!(!is_release_branch_name("main"));
+    assert!(!is_release_branch_name("release/1.0.x"));
+}
+
+#[test]
+fn test_compare_versions_with_v() {
+    use std::cmp::Ordering;
+    assert_eq!(compare_versions("1.0.x", "1.1.x"), Ordering::Less);
+    assert_eq!(compare_versions("v1.0.x", "1.1.x"), Ordering::Less);
+    assert_eq!(compare_versions("1.0.x", "v1.1.x"), Ordering::Less);
+    assert_eq!(compare_versions("v1.0.x", "v1.1.x"), Ordering::Less);
+    assert_eq!(compare_versions("1.10.x", "1.2.x"), Ordering::Greater);
+    assert_eq!(compare_versions("v1.10.x", "v1.2.x"), Ordering::Greater);
 }
