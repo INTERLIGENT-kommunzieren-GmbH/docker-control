@@ -275,7 +275,7 @@ fn create_patch_tag(
     Ok(())
 }
 
-fn update_composer_version(worktree_dir: &Path, version: &str) -> Result<()> {
+pub fn update_composer_version(worktree_dir: &Path, version: &str) -> Result<()> {
     let composer_path = worktree_dir.join("composer.json");
     if !composer_path.exists() {
         return Ok(());
@@ -303,49 +303,6 @@ fn update_composer_version(worktree_dir: &Path, version: &str) -> Result<()> {
     Ok(())
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use std::fs;
-
-    #[test]
-    fn test_update_composer_version() -> Result<()> {
-        let root = std::env::temp_dir().join("docker-control-test-composer");
-        if root.exists() {
-            fs::remove_dir_all(&root)?;
-        }
-        fs::create_dir_all(&root)?;
-
-        let composer_path = root.join("composer.json");
-
-        // Test with .x version
-        let initial_json = r#"{"name": "test/project", "version": "1.0.0"}"#;
-        fs::write(&composer_path, initial_json)?;
-
-        update_composer_version(&root, "9.0.x")?;
-
-        let updated_content = fs::read_to_string(&composer_path)?;
-        let updated_json: Value = serde_json::from_str(&updated_content)?;
-        assert_eq!(updated_json["version"], "9.0.x-dev");
-
-        // Test with tag version (no .x)
-        update_composer_version(&root, "9.0.1")?;
-        let updated_content = fs::read_to_string(&composer_path)?;
-        let updated_json: Value = serde_json::from_str(&updated_content)?;
-        assert_eq!(updated_json["version"], "9.0.1");
-
-        // Test with already -dev version
-        update_composer_version(&root, "9.0.x-dev")?;
-        let updated_content = fs::read_to_string(&composer_path)?;
-        let updated_json: Value = serde_json::from_str(&updated_content)?;
-        assert_eq!(updated_json["version"], "9.0.x-dev");
-
-        // Cleanup
-        let _ = fs::remove_dir_all(&root);
-
-        Ok(())
-    }
-}
 
 fn execute_composer_install(project_dir: &Path, worktree_dir: &Path) -> Result<()> {
     if !worktree_dir.join("composer.json").exists() {
@@ -418,7 +375,7 @@ fn generate_changelog(
             let merge_base = git.get_merge_base(highest, base)?;
             git.get_commits_between_range(&format!("{}..{}", merge_base, base))?
         } else {
-            git.get_commits_between_range(base)?
+            git.get_all_commits_from(base)?
         }
     } else {
         // For patch, between last tag and current branch
@@ -429,7 +386,7 @@ fn generate_changelog(
         if let Some(last_tag) = matching_tags.last() {
             git.get_commits_between_range(&format!("{}..{}", last_tag, base))?
         } else {
-            git.get_commits_between_range(base)?
+            git.get_all_commits_from(base)?
         }
     };
 

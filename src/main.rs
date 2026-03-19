@@ -6,16 +6,7 @@ use daemonize::Daemonize;
 use std::path::PathBuf;
 use tokio::signal;
 
-mod assets;
-mod commands;
-mod config;
-mod docker;
-mod git;
-mod ssh;
-mod ui;
-mod utils;
-
-const SSH_AGENT_PORT: u16 = 2222;
+use docker_control::{assets, commands, docker, ui, utils, SSH_AGENT_PORT};
 
 #[derive(Parser)]
 #[command(name = "docker-control")]
@@ -128,7 +119,7 @@ fn main() {
 
     // Handle stop synchronously
     if args.contains(&"--stop-ssh-agent".to_string()) {
-        if let Err(e) = crate::utils::stop_ssh_agent() {
+        if let Err(e) = docker_control::utils::stop_ssh_agent() {
             eprintln!("Failed to stop SSH agent: {}", e);
             std::process::exit(1);
         } else {
@@ -139,7 +130,7 @@ fn main() {
 
     // Handle restart: stop then start
     if args.contains(&"--restart-ssh-agent".to_string()) {
-        if let Err(e) = crate::utils::stop_ssh_agent() {
+        if let Err(e) = docker_control::utils::stop_ssh_agent() {
             eprintln!("Warning: Failed to stop SSH agent: {}", e);
         } else {
             // Wait for port to close
@@ -273,7 +264,7 @@ async fn async_main() {
     }
 
     if cli.stop_ssh_agent {
-        if let Err(e) = crate::utils::stop_ssh_agent() {
+        if let Err(e) = docker_control::utils::stop_ssh_agent() {
             ui::critical(format!("Failed to stop SSH agent: {}", e));
         } else {
             ui::info("SSH agent forwarding stopped.");
@@ -282,7 +273,7 @@ async fn async_main() {
     }
 
     if cli.restart_ssh_agent {
-        if let Err(e) = crate::utils::stop_ssh_agent() {
+        if let Err(e) = docker_control::utils::stop_ssh_agent() {
             ui::warning(format!("Failed to stop SSH agent: {}", e));
         }
         // Then start
@@ -304,7 +295,7 @@ async fn async_main() {
 
                 // Set SSH_AUTH_PORT
                 unsafe {
-                    std::env::set_var("SSH_AUTH_PORT", format!("{}:2222", platform_info.bind_ip));
+                    std::env::set_var("SSH_AUTH_PORT", format!("{}:{}", platform_info.bind_ip, SSH_AGENT_PORT));
                 }
 
                 ui::info("SSH agent forwarding started in daemon mode.");

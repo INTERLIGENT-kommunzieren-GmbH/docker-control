@@ -7,6 +7,13 @@ pub struct GitService {
 }
 
 impl GitService {
+    pub fn from_repo(repo: Repository) -> Self {
+        Self { repo }
+    }
+
+    pub fn repo(&self) -> &Repository {
+        &self.repo
+    }
     pub fn auth_callbacks() -> RemoteCallbacks<'static> {
         let mut callbacks = RemoteCallbacks::new();
         callbacks.credentials(|_url, username_from_url, _allowed_types| {
@@ -58,7 +65,7 @@ impl GitService {
             }
         }
 
-        branches.sort();
+        branches.sort_by(|a, b| compare_versions(a, b));
         Ok(branches)
     }
 
@@ -83,20 +90,14 @@ impl GitService {
     pub fn get_commits_between_range(&self, range: &str) -> Result<Vec<(String, String)>> {
         let mut revwalk = self.repo.revwalk()?;
         revwalk.push_range(range)?;
-        revwalk.set_sorting(git2::Sort::REVERSE)?;
+        self.collect_commits(revwalk)
+    }
 
-        let mut commits = Vec::new();
-        for id in revwalk {
-            let id = id?;
-            let commit = self.repo.find_commit(id)?;
-            let summary = commit.summary().unwrap_or("").to_string();
-
-            // Filter out "release:" commits
-            if !summary.starts_with("release:") {
-                commits.push((id.to_string(), summary));
-            }
-        }
-        Ok(commits)
+    pub fn get_all_commits_from(&self, revision: &str) -> Result<Vec<(String, String)>> {
+        let mut revwalk = self.repo.revwalk()?;
+        let obj = self.repo.revparse_single(revision)?;
+        revwalk.push(obj.id())?;
+        self.collect_commits(revwalk)
     }
 
     pub fn list_tags(&self) -> Result<Vec<String>> {
@@ -109,7 +110,7 @@ impl GitService {
             }
             true
         })?;
-        tags.sort();
+        tags.sort_by(|a, b| compare_versions(a, b));
         Ok(tags)
     }
 
@@ -123,6 +124,10 @@ impl GitService {
     pub fn get_commits_between(&self, from: &str, to: &str) -> Result<Vec<(String, String)>> {
         let mut revwalk = self.repo.revwalk()?;
         revwalk.push_range(&format!("{}..{}", from, to))?;
+        self.collect_commits(revwalk)
+    }
+
+    fn collect_commits(&self, mut revwalk: git2::Revwalk) -> Result<Vec<(String, String)>> {
         revwalk.set_sorting(git2::Sort::REVERSE)?;
 
         let mut commits = Vec::new();
@@ -131,7 +136,7 @@ impl GitService {
             let commit = self.repo.find_commit(id)?;
             let summary = commit.summary().unwrap_or("").to_string();
 
-            // Filter out "release:" commits as per bash implementation
+            // Filter out "release:" commits
             if !summary.starts_with("release:") {
                 commits.push((id.to_string(), summary));
             }
@@ -445,6 +450,34 @@ impl GitService {
     }
 }
 
+fn compare_versions(a: &str, b: &str) -> std::cmp::Ordering {
+    let a_clean = a.strip_prefix('v').unwrap_or(a);
+    let b_clean = b.strip_prefix('v').unwrap_or(b);
+
+    let a_parts: Vec<&str> = a_clean.split('.').collect();
+    let b_parts: Vec<&str> = b_clean.split('.').collect();
+
+    for i in 0..std::cmp::min(a_parts.len(), b_parts.len()) {
+        let a_num = a_parts[i].parse::<u32>();
+        let b_num = b_parts[i].parse::<u32>();
+
+        match (a_num, b_num) {
+            (Ok(an), Ok(bn)) => {
+                if an != bn {
+                    return an.cmp(&bn);
+                }
+            }
+            _ => {
+                if a_parts[i] != b_parts[i] {
+                    return a_parts[i].cmp(b_parts[i]);
+                }
+            }
+        }
+    }
+
+    a_parts.len().cmp(&b_parts.len())
+}
+
 fn is_release_branch_name(name: &str) -> bool {
     // Matches x.y.x pattern
     let parts: Vec<&str> = name.split('.').collect();
@@ -456,85 +489,3 @@ fn is_release_branch_name(name: &str) -> bool {
         && parts[2] == "x"
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use std::fs;
-
-    fn setup_repo(path: &Path) -> Repository {
-        if path.exists() {
-            fs::remove_dir_all(path).unwrap();
-        }
-        fs::create_dir_all(path).unwrap();
-        let repo = Repository::init(path).unwrap();
-
-        // Create initial commit
-        {
-            let signature = repo.signature().unwrap();
-            let tree_id = repo.index().unwrap().write_tree().unwrap();
-            let tree = repo.find_tree(tree_id).unwrap();
-            repo.commit(
-                Some("HEAD"),
-                &signature,
-                &signature,
-                "Initial commit",
-                &tree,
-                &[],
-            )
-            .unwrap();
-        }
-
-        repo
-    }
-
-    #[test]
-    fn test_create_worktree_existing_branch() {
-        let root = std::env::temp_dir().join("docker-control-test-existing");
-        let repo = setup_repo(&root);
-        let git = GitService { repo };
-
-        // Create a branch
-        let head = git.repo.head().unwrap().peel_to_commit().unwrap();
-        git.repo.branch("8.0.x", &head, false).unwrap();
-
-        // Create worktree for existing branch
-        let wt_path = root.join("wt-8.0.x");
-        let result = git.create_worktree("8.0.x", &wt_path, Some("8.0.x"));
-
-        assert!(
-            result.is_ok(),
-            "Failed to create worktree for existing branch: {:?}",
-            result.err()
-        );
-        assert!(wt_path.exists());
-        assert!(wt_path.join(".git").exists());
-
-        // Cleanup
-        let _ = fs::remove_dir_all(&root);
-    }
-
-    #[test]
-    fn test_create_worktree_new_branch_from_checked_out() {
-        let root = std::env::temp_dir().join("docker-control-test-checked-out");
-        let repo = setup_repo(&root);
-        let git = GitService { repo };
-
-        // Current branch is 'master' or 'main' (already checked out in setup_repo)
-        let head_branch = git.get_current_branch().unwrap();
-
-        // Create worktree for new branch based on head_branch
-        let wt_path = root.join("wt-from-main");
-        let result = git.create_worktree("9.0.x", &wt_path, Some(&head_branch));
-
-        assert!(
-            result.is_ok(),
-            "Failed to create worktree from checked out branch: {:?}",
-            result.err()
-        );
-        assert!(wt_path.exists());
-        assert!(git.repo.find_branch("9.0.x", BranchType::Local).is_ok());
-
-        // Cleanup
-        let _ = fs::remove_dir_all(&root);
-    }
-}

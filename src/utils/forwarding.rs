@@ -38,7 +38,7 @@ pub async fn ensure_forwarding(info: &PlatformInfo) -> Result<()> {
             ui::warning("SSH agent seems to not be running ($SSH_AUTH_SOCK is empty).");
         }
     } else {
-        ui::debug("Port 2222 is already open");
+        ui::debug(format!("Port {} is already open", crate::SSH_AGENT_PORT));
     }
 
     Ok(())
