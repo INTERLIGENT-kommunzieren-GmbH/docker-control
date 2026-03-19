@@ -438,7 +438,7 @@ async fn async_main() {
             }
         }
         Commands::Release { module } => {
-            if let Err(e) = commands::release::execute(&project_dir, module) {
+            if let Err(e) = commands::release::execute(&project_dir, module, commands::release::ReleaseOptions::default()) {
                 ui::critical(format!("Error: {}", e));
             }
         }

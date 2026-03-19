@@ -1,11 +1,58 @@
 use crate::git::GitService;
 use crate::ui;
-use anyhow::{Result, anyhow};
+use anyhow::{anyhow, Result};
 use inquire::{Confirm, Select};
 use serde_json::Value;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
+
+pub trait PromptProvider {
+    fn confirm_breaking_change(&self) -> Result<bool>;
+    fn confirm_new_feature(&self) -> Result<bool>;
+    fn select_patch_branch(&self, branches: Vec<String>) -> Result<String>;
+    fn select_module(&self, modules: Vec<String>) -> Result<String>;
+}
+
+pub struct InteractivePromptProvider;
+
+impl PromptProvider for InteractivePromptProvider {
+    fn confirm_breaking_change(&self) -> Result<bool> {
+        Ok(Confirm::new("Is this a Breaking Change?")
+            .with_default(false)
+            .prompt()?)
+    }
+
+    fn confirm_new_feature(&self) -> Result<bool> {
+        Ok(Confirm::new("Is this a new Feature?")
+            .with_default(false)
+            .prompt()?)
+    }
+
+    fn select_patch_branch(&self, branches: Vec<String>) -> Result<String> {
+        Ok(Select::new("Select branch for patch release", branches).prompt()?)
+    }
+
+    fn select_module(&self, modules: Vec<String>) -> Result<String> {
+        Ok(Select::new("Select project or vendor module for release", modules).prompt()?)
+    }
+}
+
+pub struct ReleaseOptions {
+    pub prompt_provider: Box<dyn PromptProvider>,
+    pub skip_composer: bool,
+    pub keep_worktree: bool,
+}
+
+impl Default for ReleaseOptions {
+    fn default() -> Self {
+        Self {
+            prompt_provider: Box::new(InteractivePromptProvider),
+            skip_composer: false,
+            keep_worktree: false,
+        }
+    }
+}
 
 struct WorktreeCleanup<'a> {
     git_path: &'a Path,
@@ -14,11 +61,11 @@ struct WorktreeCleanup<'a> {
 }
 
 impl<'a> WorktreeCleanup<'a> {
-    fn new(git_path: &'a Path, worktree_path: PathBuf) -> Self {
+    fn new(git_path: &'a Path, worktree_path: PathBuf, active: bool) -> Self {
         Self {
             git_path,
             worktree_path,
-            active: true,
+            active,
         }
     }
 
@@ -43,18 +90,21 @@ impl<'a> Drop for WorktreeCleanup<'a> {
     }
 }
 
-pub fn execute(project_dir: &Path, module: Option<String>) -> Result<()> {
+pub fn execute(
+    project_dir: &Path,
+    module: Option<String>,
+    options: ReleaseOptions,
+) -> Result<()> {
     let mut selected_module = module;
 
     // Module selection logic
     if selected_module.is_none() {
         let vendor_modules = GitService::list_vendor_modules(project_dir)?;
         if !vendor_modules.is_empty() {
-            let mut options = vec!["Main Project".to_string()];
-            options.extend(vendor_modules);
+            let mut opts = vec!["Main Project".to_string()];
+            opts.extend(vendor_modules);
 
-            let selection =
-                Select::new("Select project or vendor module for release", options).prompt()?;
+            let selection = options.prompt_provider.select_module(opts)?;
             if selection != "Main Project" {
                 selected_module = Some(selection);
             }
@@ -90,22 +140,17 @@ pub fn execute(project_dir: &Path, module: Option<String>) -> Result<()> {
         ui::info("No existing release branches found. Creating initial release 1.0.x...");
         ("1.0.x".to_string(), "INITIAL")
     } else {
-        let is_breaking = Confirm::new("Is this a Breaking Change?")
-            .with_default(false)
-            .prompt()?;
+        let is_breaking = options.prompt_provider.confirm_breaking_change()?;
 
         if is_breaking {
             (get_next_major(&branches)?, "MAJOR")
         } else {
-            let is_feature = Confirm::new("Is this a new Feature?")
-                .with_default(false)
-                .prompt()?;
+            let is_feature = options.prompt_provider.confirm_new_feature()?;
 
             if is_feature {
                 (get_next_minor(&branches)?, "MINOR")
             } else {
-                let selected_branch =
-                    Select::new("Select branch for patch release", branches).prompt()?;
+                let selected_branch = options.prompt_provider.select_patch_branch(branches)?;
                 (get_next_patch(&git, &selected_branch)?, "PATCH")
             }
         }
@@ -126,6 +171,7 @@ pub fn execute(project_dir: &Path, module: Option<String>) -> Result<()> {
             &branch,
             &release,
             selected_module.as_deref(),
+            &options,
         )?;
     } else {
         // For initial, major, minor, we create a new branch
@@ -136,6 +182,7 @@ pub fn execute(project_dir: &Path, module: Option<String>) -> Result<()> {
             &release,
             &primary_branch,
             selected_module.as_deref(),
+            &options,
         )?;
     }
 
@@ -155,6 +202,7 @@ fn create_release_branch(
     version: &str,
     primary_branch: &str,
     module: Option<&str>,
+    options: &ReleaseOptions,
 ) -> Result<()> {
     let worktree_base = if let Some(m) = module {
         project_dir.join("releases/vendor").join(m)
@@ -169,13 +217,9 @@ fn create_release_branch(
         version
     ));
 
-    // Create worktree natively if possible, or use Command if GitService doesn't support it yet
-    // GitService doesn't have worktree support yet, but we can add it or keep Command for now.
-    // Given the requirement to replace external dependencies where possible, I should check if git2 supports worktrees.
-    // git2 does support worktrees.
     git.create_worktree(version, &worktree_dir, Some(primary_branch))?;
 
-    let _cleanup = WorktreeCleanup::new(git_path, worktree_dir.clone());
+    let _cleanup = WorktreeCleanup::new(git_path, worktree_dir.clone(), !options.keep_worktree);
 
     // Update composer.json version
     update_composer_version(&worktree_dir, version)?;
@@ -192,7 +236,7 @@ fn create_release_branch(
     }
 
     // Create composer.lock via Docker
-    execute_composer_install(project_dir, &worktree_dir)?;
+    execute_composer_install(project_dir, &worktree_dir, options)?;
 
     // Commit composer.lock
     if let Err(e) = worktree_git.add_file(Path::new("composer.lock")) {
@@ -220,6 +264,7 @@ fn create_patch_tag(
     branch: &str,
     tag: &str,
     module: Option<&str>,
+    options: &ReleaseOptions,
 ) -> Result<()> {
     let worktree_base = if let Some(m) = module {
         project_dir.join("releases/vendor").join(m)
@@ -238,7 +283,7 @@ fn create_patch_tag(
     if !worktree_dir.exists() {
         git.create_worktree(branch, &worktree_dir, Some(branch))?;
     }
-    let _cleanup = WorktreeCleanup::new(git_path, worktree_dir.clone());
+    let _cleanup = WorktreeCleanup::new(git_path, worktree_dir.clone(), !options.keep_worktree);
 
     let worktree_git = GitService::open(&worktree_dir)?;
 
@@ -303,8 +348,16 @@ pub fn update_composer_version(worktree_dir: &Path, version: &str) -> Result<()>
     Ok(())
 }
 
+fn execute_composer_install(
+    project_dir: &Path,
+    worktree_dir: &Path,
+    options: &ReleaseOptions,
+) -> Result<()> {
+    if options.skip_composer {
+        ui::info("Skipping composer install (mocked/test mode)");
+        return Ok(());
+    }
 
-fn execute_composer_install(project_dir: &Path, worktree_dir: &Path) -> Result<()> {
     if !worktree_dir.join("composer.json").exists() {
         return Ok(());
     }
@@ -398,92 +451,60 @@ fn generate_changelog(
 
     let mut changelog_content = String::new();
     for (hash, summary) in commits {
-        changelog_content.push_str(&format!("* {} - {}\n", &hash[..8], summary));
+        changelog_content.push_str(&format!("* {} ({})\n", summary, hash));
     }
 
-    if changelog_content.is_empty() {
-        changelog_content = "* No significant changes recorded\n".to_string();
+    if changelog_path.exists() {
+        let existing = fs::read_to_string(&changelog_path)?;
+        changelog_content.push('\n');
+        changelog_content.push_str(&existing);
     }
 
-    let mut full_changelog = if changelog_path.exists() {
-        fs::read_to_string(&changelog_path)?
-    } else {
-        "# Changelog\n\nAll notable changes to this project will be documented in this file.\n\nThe format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),\nand this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).\n\n".to_string()
-    };
-
-    let new_section = if is_new_branch {
-        format!(
-            "## [Unreleased] - Release branch {}\n\n### Changes planned for this release:\n\n{}\n",
-            version, changelog_content
-        )
-    } else {
-        let date = chrono::Local::now().format("%Y-%m-%d").to_string();
-        format!("## [{}] - {}\n\n{}\n", version, date, changelog_content)
-    };
-
-    // Insert new section after header
-    if let Some(pos) = full_changelog.find("## [") {
-        full_changelog.insert_str(pos, &format!("{}\n", new_section));
-    } else {
-        full_changelog.push_str(&new_section);
-    }
-
-    fs::write(&changelog_path, &full_changelog)?;
-
-    // Open for editing
-    let editor = std::env::var("EDITOR").unwrap_or_else(|_| "nano".to_string());
-    let _ = Command::new(editor)
-        .arg(&changelog_path)
-        .stdin(Stdio::inherit())
-        .stdout(Stdio::inherit())
-        .stderr(Stdio::inherit())
-        .status();
-
-    // Commit changelog
-    let worktree_git = GitService::open(worktree_dir)?;
-    if let Err(e) = worktree_git.add_file(Path::new("CHANGELOG.md")) {
-        ui::warning(format!("Failed to add CHANGELOG.md: {}", e));
-    } else if let Err(e) = worktree_git.commit("release: update changelog") {
-        ui::warning(format!("Failed to commit changelog: {}", e));
-    }
-
+    fs::write(
+        changelog_path,
+        format!("## Release {}\n\n{}", version, changelog_content),
+    )?;
     Ok(())
 }
 
 fn get_next_major(branches: &[String]) -> Result<String> {
-    let latest = branches
-        .last()
-        .ok_or_else(|| anyhow!("No branches found"))?;
-    let clean_latest = latest.strip_prefix('v').unwrap_or(latest);
-    let parts: Vec<&str> = clean_latest.split('.').collect();
-    let major: u32 = parts[0].parse()?;
-    Ok(format!("{}.0.x", major + 1))
+    let mut majors: Vec<u32> = branches
+        .iter()
+        .filter_map(|b| b.split('.').next()?.parse().ok())
+        .collect();
+    majors.sort();
+    let next_major = majors.last().unwrap_or(&0) + 1;
+    Ok(format!("{}.0.x", next_major))
 }
 
 fn get_next_minor(branches: &[String]) -> Result<String> {
-    let latest = branches
-        .last()
-        .ok_or_else(|| anyhow!("No branches found"))?;
-    let clean_latest = latest.strip_prefix('v').unwrap_or(latest);
-    let parts: Vec<&str> = clean_latest.split('.').collect();
-    let major: u32 = parts[0].parse()?;
-    let minor: u32 = parts[1].parse()?;
-    Ok(format!("{}.{}.x", major, minor + 1))
+    // Find highest major
+    let mut majors: Vec<u32> = branches
+        .iter()
+        .filter_map(|b| b.split('.').next()?.parse().ok())
+        .collect();
+    majors.sort();
+    let highest_major = majors.last().ok_or_else(|| anyhow!("No branches found"))?;
+
+    let mut minors: Vec<u32> = branches
+        .iter()
+        .filter(|b| b.starts_with(&format!("{}.", highest_major)))
+        .filter_map(|b| b.split('.').nth(1)?.parse().ok())
+        .collect();
+    minors.sort();
+    let next_minor = minors.last().unwrap_or(&0) + 1;
+    Ok(format!("{}.{}.x", highest_major, next_minor))
 }
 
 fn get_next_patch(git: &GitService, branch: &str) -> Result<String> {
     let tags = git.list_tags()?;
-    let prefix = branch
-        .strip_suffix("x")
-        .ok_or_else(|| anyhow!("Invalid branch name: {}", branch))?;
-
+    let prefix = branch.trim_end_matches(".x");
     let mut patches: Vec<u32> = tags
         .iter()
         .filter(|t| t.starts_with(prefix))
-        .filter_map(|t| t.strip_prefix(prefix).and_then(|p| p.parse::<u32>().ok()))
+        .filter_map(|t| t.split('.').nth(2)?.parse().ok())
         .collect();
-
     patches.sort();
     let next_patch = patches.last().map(|p| p + 1).unwrap_or(0);
-    Ok(format!("{}{}", prefix, next_patch))
+    Ok(format!("{}.{}", prefix, next_patch))
 }
