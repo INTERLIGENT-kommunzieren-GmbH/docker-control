@@ -112,7 +112,7 @@ pub async fn execute(
         archive_path: &archive_path,
         release_dir: &release_dir,
         server_root,
-        maintenance_mode,
+        maintenance_mode: &maintenance_mode,
         yes,
     })
     .await
@@ -271,7 +271,7 @@ struct DeploymentContext<'a> {
     archive_path: &'a Path,
     release_dir: &'a str,
     server_root: &'a str,
-    maintenance_mode: String,
+    maintenance_mode: &'a str,
     yes: bool,
 }
 
@@ -317,7 +317,7 @@ async fn perform_deployment(ctx: DeploymentContext<'_>) -> Result<()> {
 
     // 6. Maintenance mode selection and activation
     let maintenance_mode = if ctx.yes {
-        ctx.maintenance_mode
+        ctx.maintenance_mode.to_string()
     } else {
         Select::new("Select maintenance mode", vec!["hard", "soft"])
             .with_starting_cursor(if ctx.maintenance_mode == "soft" {
