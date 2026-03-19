@@ -1,57 +1,80 @@
-use crate::git::GitService;
+use crate::git::{CleanupMode, GitService, WorktreeCleanup};
 use crate::ui;
-use anyhow::{Result, anyhow};
+use anyhow::{anyhow, Result};
 use inquire::{Confirm, Select};
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::process::{Command, Stdio};
 
-struct WorktreeCleanup<'a> {
-    git_path: &'a Path,
-    worktree_path: PathBuf,
-    active: bool,
+pub trait MergePromptProvider {
+    fn select_module(&self, modules: Vec<String>) -> Result<String>;
+    fn select_release_branch(&self, branches: Vec<String>) -> Result<String>;
+    fn confirm_cherry_pick(&self, count: usize) -> Result<bool>;
+    fn select_conflict_resolution(&self) -> Result<String>;
+    fn confirm_push(&self, branch: &str) -> Result<bool>;
 }
 
-impl<'a> WorktreeCleanup<'a> {
-    fn new(git_path: &'a Path, worktree_path: PathBuf) -> Self {
+pub struct InteractiveMergePromptProvider;
+
+impl MergePromptProvider for InteractiveMergePromptProvider {
+    fn select_module(&self, modules: Vec<String>) -> Result<String> {
+        Ok(Select::new("Select project or vendor module to merge", modules).prompt()?)
+    }
+
+    fn select_release_branch(&self, branches: Vec<String>) -> Result<String> {
+        Ok(Select::new("Select release branch to merge", branches).prompt()?)
+    }
+
+    fn confirm_cherry_pick(&self, count: usize) -> Result<bool> {
+        Ok(Confirm::new(&format!("Proceed with cherry-picking these {} commits?", count))
+            .with_default(true)
+            .prompt()?)
+    }
+
+    fn select_conflict_resolution(&self) -> Result<String> {
+        Ok(Select::new(
+            "Conflict resolution",
+            vec!["Start merge tool", "I have resolved it", "Abort"],
+        )
+        .prompt()?
+        .to_string())
+    }
+
+    fn confirm_push(&self, branch: &str) -> Result<bool> {
+        Ok(Confirm::new(&format!("Push merge branch {} to remote?", branch))
+            .with_default(true)
+            .prompt()?)
+    }
+}
+
+pub struct MergeOptions {
+    pub prompt_provider: Box<dyn MergePromptProvider>,
+    pub keep_worktree: bool,
+}
+
+impl Default for MergeOptions {
+    fn default() -> Self {
         Self {
-            git_path,
-            worktree_path,
-            active: true,
-        }
-    }
-
-    fn cancel(&mut self) {
-        self.active = false;
-    }
-}
-
-impl<'a> Drop for WorktreeCleanup<'a> {
-    fn drop(&mut self) {
-        if self.active && self.worktree_path.exists() {
-            let _ = Command::new("git")
-                .arg("-C")
-                .arg(self.git_path)
-                .arg("worktree")
-                .arg("remove")
-                .arg("--force")
-                .arg(&self.worktree_path)
-                .status();
+            prompt_provider: Box::new(InteractiveMergePromptProvider),
+            keep_worktree: false,
         }
     }
 }
 
-pub fn execute(project_dir: &Path, module: Option<String>) -> Result<()> {
+pub fn execute(
+    project_dir: &Path,
+    module: Option<String>,
+    options: MergeOptions,
+) -> Result<()> {
     let mut selected_module = module;
 
     // Module selection logic
     if selected_module.is_none() {
         let vendor_modules = GitService::list_vendor_modules(project_dir)?;
         if !vendor_modules.is_empty() {
-            let mut options = vec!["Main Project".to_string()];
-            options.extend(vendor_modules);
+            let mut opts = vec!["Main Project".to_string()];
+            opts.extend(vendor_modules);
 
-            let selection =
-                Select::new("Select project or vendor module to merge", options).prompt()?;
+            let selection = options.prompt_provider.select_module(opts)?;
             if selection != "Main Project" {
                 selected_module = Some(selection);
             }
@@ -85,7 +108,7 @@ pub fn execute(project_dir: &Path, module: Option<String>) -> Result<()> {
         return Err(anyhow!("No release branches found to merge."));
     }
 
-    let release_branch = Select::new("Select release branch to merge", branches).prompt()?;
+    let release_branch = options.prompt_provider.select_release_branch(branches)?;
 
     // Update branches
     ui::info(format!(
@@ -119,10 +142,15 @@ pub fn execute(project_dir: &Path, module: Option<String>) -> Result<()> {
     std::fs::create_dir_all(&worktree_base)?;
 
     ui::info("Creating separate worktrees for source and merge branches...");
+    let mode = if options.keep_worktree {
+        CleanupMode::Keep
+    } else {
+        CleanupMode::Always
+    };
 
     // Release worktree
     git.create_worktree(&release_branch, &release_wt_path, Some(&release_branch))?;
-    let _release_cleanup = WorktreeCleanup::new(&git_path, release_wt_path.clone());
+    let _release_cleanup = WorktreeCleanup::new(&git_path, release_wt_path.clone(), mode);
 
     // Merge worktree (created from primary branch)
     git.create_worktree(
@@ -130,12 +158,9 @@ pub fn execute(project_dir: &Path, module: Option<String>) -> Result<()> {
         &merge_wt_path,
         Some(&format!("origin/{}", primary_branch)),
     )?;
-    let mut merge_cleanup = WorktreeCleanup::new(&git_path, merge_wt_path.clone());
+    let mut _merge_cleanup = WorktreeCleanup::new(&git_path, merge_wt_path.clone(), mode);
 
     let merge_wt_git = GitService::open(&merge_wt_path)?;
-    // Rename/create local branch if needed - create_worktree handles it partially, but let's ensure it's named merge_branch
-    // Actually our GitService::create_worktree doesn't name the branch for worktree, it just checks out.
-    // Let's improve GitService::create_worktree to take branch name.
 
     // Get commits to cherry-pick
     let commits = git.get_commits_between(&primary_branch, &release_branch)?;
@@ -154,10 +179,7 @@ pub fn execute(project_dir: &Path, module: Option<String>) -> Result<()> {
         ui::info(format!("  • {} - {}", &hash[..8], summary));
     }
 
-    if !Confirm::new("Proceed with cherry-picking these commits?")
-        .with_default(true)
-        .prompt()?
-    {
+    if !options.prompt_provider.confirm_cherry_pick(commits.len())? {
         ui::info("Merge cancelled.");
         return Ok(());
     }
@@ -184,13 +206,9 @@ pub fn execute(project_dir: &Path, module: Option<String>) -> Result<()> {
             ));
 
             loop {
-                let choice = Select::new(
-                    "Conflict resolution",
-                    vec!["Start merge tool", "I have resolved it", "Abort"],
-                )
-                .prompt()?;
+                let choice = options.prompt_provider.select_conflict_resolution()?;
 
-                match choice {
+                match choice.as_str() {
                     "Start merge tool" => {
                         let _ = Command::new("git")
                             .arg("-C")
@@ -255,10 +273,7 @@ pub fn execute(project_dir: &Path, module: Option<String>) -> Result<()> {
         merge_branch
     ));
 
-    if Confirm::new(&format!("Push merge branch {} to remote?", merge_branch))
-        .with_default(true)
-        .prompt()?
-    {
+    if options.prompt_provider.confirm_push(&merge_branch)? {
         ui::info(format!(
             "Pushing merge branch {} to remote repository...",
             merge_branch
@@ -274,7 +289,7 @@ pub fn execute(project_dir: &Path, module: Option<String>) -> Result<()> {
             ui::info(format!("  - Worktree location: {:?}", merge_wt_path));
 
             // Cancel cleanup for merge worktree so user can investigate
-            merge_cleanup.cancel();
+            _merge_cleanup.cancel();
             return Err(anyhow!("Failed to push merge branch to remote."));
         } else {
             ui::success(format!(
@@ -305,7 +320,7 @@ pub fn execute(project_dir: &Path, module: Option<String>) -> Result<()> {
         ui::info("Push cancelled. Local merge branch preserved:");
         ui::info(format!("  - Merge branch: {}", merge_branch));
         ui::info(format!("  - Worktree location: {:?}", merge_wt_path));
-        merge_cleanup.cancel();
+        _merge_cleanup.cancel();
     }
 
     Ok(())

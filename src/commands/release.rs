@@ -1,10 +1,10 @@
-use crate::git::GitService;
+use crate::git::{get_docker_user_id, CleanupMode, GitService, WorktreeCleanup};
 use crate::ui;
 use anyhow::{anyhow, Result};
 use inquire::{Confirm, Select};
 use serde_json::Value;
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::process::{Command, Stdio};
 
 pub trait PromptProvider {
@@ -50,42 +50,6 @@ impl Default for ReleaseOptions {
             prompt_provider: Box::new(InteractivePromptProvider),
             skip_composer: false,
             keep_worktree: false,
-        }
-    }
-}
-
-struct WorktreeCleanup<'a> {
-    git_path: &'a Path,
-    worktree_path: PathBuf,
-    active: bool,
-}
-
-impl<'a> WorktreeCleanup<'a> {
-    fn new(git_path: &'a Path, worktree_path: PathBuf, active: bool) -> Self {
-        Self {
-            git_path,
-            worktree_path,
-            active,
-        }
-    }
-
-    #[allow(dead_code)]
-    fn cancel(&mut self) {
-        self.active = false;
-    }
-}
-
-impl<'a> Drop for WorktreeCleanup<'a> {
-    fn drop(&mut self) {
-        if self.active && self.worktree_path.exists() {
-            let _ = Command::new("git")
-                .arg("-C")
-                .arg(self.git_path)
-                .arg("worktree")
-                .arg("remove")
-                .arg("--force")
-                .arg(&self.worktree_path)
-                .status();
         }
     }
 }
@@ -219,7 +183,12 @@ fn create_release_branch(
 
     git.create_worktree(version, &worktree_dir, Some(primary_branch))?;
 
-    let _cleanup = WorktreeCleanup::new(git_path, worktree_dir.clone(), !options.keep_worktree);
+    let mode = if options.keep_worktree {
+        CleanupMode::Keep
+    } else {
+        CleanupMode::Always
+    };
+    let mut cleanup = WorktreeCleanup::new(git_path, worktree_dir.clone(), mode);
 
     // Update composer.json version
     update_composer_version(&worktree_dir, version)?;
@@ -252,7 +221,11 @@ fn create_release_branch(
 
     // Push branch
     ui::info(format!("Pushing release branch {} to origin...", version));
-    worktree_git.push_branch(version)?;
+    if let Err(e) = worktree_git.push_branch(version) {
+        ui::critical(format!("Failed to push release branch to origin: {}", e));
+        cleanup.cancel();
+        return Err(anyhow!("Failed to push release branch to origin."));
+    }
 
     Ok(())
 }
@@ -283,7 +256,12 @@ fn create_patch_tag(
     if !worktree_dir.exists() {
         git.create_worktree(branch, &worktree_dir, Some(branch))?;
     }
-    let _cleanup = WorktreeCleanup::new(git_path, worktree_dir.clone(), !options.keep_worktree);
+    let mode = if options.keep_worktree {
+        CleanupMode::Keep
+    } else {
+        CleanupMode::Always
+    };
+    let mut cleanup = WorktreeCleanup::new(git_path, worktree_dir.clone(), mode);
 
     let worktree_git = GitService::open(&worktree_dir)?;
 
@@ -315,7 +293,11 @@ fn create_patch_tag(
 
     // Push tag
     ui::info(format!("Pushing tag {} to origin...", tag));
-    worktree_git.push_tag(tag)?;
+    if let Err(e) = worktree_git.push_tag(tag) {
+        ui::critical(format!("Failed to push tag to origin: {}", e));
+        cleanup.cancel();
+        return Err(anyhow!("Failed to push tag to origin."));
+    }
 
     Ok(())
 }
@@ -379,9 +361,7 @@ fn execute_composer_install(
         .arg("run")
         .arg("--rm")
         .arg("-u")
-        .arg(format!("{}:{}", unsafe { libc::getuid() }, unsafe {
-            libc::getgid()
-        }))
+        .arg(get_docker_user_id())
         .arg("-e")
         .arg(format!("SSH_AUTH_PORT={}", ssh_auth_port))
         .arg("-e")

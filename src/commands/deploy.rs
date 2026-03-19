@@ -1,5 +1,5 @@
 use crate::config::{DeployConfig, Environment};
-use crate::git::GitService;
+use crate::git::{GitService, get_docker_user_id};
 use crate::ssh;
 use crate::ui;
 use anyhow::{Context, Result, anyhow};
@@ -207,9 +207,7 @@ async fn create_deployment_archive(
         .arg("run")
         .arg("--rm")
         .arg("-u")
-        .arg(format!("{}:{}", unsafe { libc::getuid() }, unsafe {
-            libc::getgid()
-        }))
+        .arg(get_docker_user_id())
         .arg("--group-add")
         .arg("www-data")
         .arg("-e")

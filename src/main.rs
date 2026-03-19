@@ -422,7 +422,7 @@ async fn async_main() {
             }
         }
         Commands::Merge { module } => {
-            if let Err(e) = commands::merge::execute(&project_dir, module) {
+            if let Err(e) = commands::merge::execute(&project_dir, module, commands::merge::MergeOptions::default()) {
                 ui::critical(format!("Error: {}", e));
             }
         }

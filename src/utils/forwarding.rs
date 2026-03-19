@@ -148,14 +148,14 @@ async fn restart_php_containers() -> Result<()> {
     for container in containers {
         if let Some(id) = container.id {
             let inspect = docker.inspect_container(&id, None).await?;
-            if let Some(config) = inspect.config {
-                if let Some(labels) = config.labels {
+            if let Some(config) = inspect.config
+                && let Some(labels) = config.labels {
                     let dir = labels
                         .get("com.interligent.dockerplugin.dir")
                         .or_else(|| labels.get("com.docker.compose.project.working_dir"));
 
-                    if let Some(dir) = dir {
-                        if !dir.is_empty() && !projects.contains(dir) {
+                    if let Some(dir) = dir
+                        && !dir.is_empty() && !projects.contains(dir) {
                             // Check if directory exists and has a compose file
                             let path = std::path::Path::new(dir);
                             if path.exists()
@@ -165,9 +165,7 @@ async fn restart_php_containers() -> Result<()> {
                                 projects.push(dir.clone());
                             }
                         }
-                    }
                 }
-            }
         }
     }
 

@@ -30,9 +30,9 @@ pub fn detect_platform() -> PlatformInfo {
 
     if os == "linux" {
         // Check for WSL
-        if let Ok(version) = std::fs::read_to_string("/proc/version") {
-            if version.to_lowercase().contains("microsoft")
-                || version.to_lowercase().contains("wsl")
+        if let Ok(version) = std::fs::read_to_string("/proc/version")
+            && (version.to_lowercase().contains("microsoft")
+                || version.to_lowercase().contains("wsl"))
             {
                 ui::debug("Detected WSL platform");
                 return PlatformInfo {
@@ -40,7 +40,6 @@ pub fn detect_platform() -> PlatformInfo {
                     bind_ip: "127.0.0.1".to_string(),
                 };
             }
-        }
 
         // Check for Docker Desktop
         if let Ok(output) = Command::new("docker").arg("info").output() {
@@ -103,14 +102,13 @@ pub fn detect_platform() -> PlatformInfo {
 fn get_docker0_ip() -> Option<String> {
     if let Ok(interfaces) = get_if_addrs::get_if_addrs() {
         for interface in interfaces {
-            if interface.name == "docker0" {
-                if let get_if_addrs::IfAddr::V4(addr) = interface.addr {
+            if interface.name == "docker0"
+                && let get_if_addrs::IfAddr::V4(addr) = interface.addr {
                     let ip = addr.ip.to_string();
                     if ip != "127.0.0.1" {
                         return Some(ip);
                     }
                 }
-            }
         }
     }
 

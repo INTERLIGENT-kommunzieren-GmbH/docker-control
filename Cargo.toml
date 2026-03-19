@@ -25,7 +25,9 @@ walkdir = "2.5"
 bollard = "0.18.1"
 daemonize = "0.5"
 
-# The profile that 'dist' will build with
+[dev-dependencies]
+tempfile = "3.10.1"
+
 [profile.dist]
 inherits = "release"
 lto = "thin"

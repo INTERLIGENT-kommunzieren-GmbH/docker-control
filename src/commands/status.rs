@@ -47,13 +47,11 @@ pub async fn get_summary(project_dir: &Path) -> String {
     if let Ok(git) = GitService::open(&git_path) {
         if let Ok(branch) = git.get_current_branch() {
             let mut git_info = format!("Git: {}", branch);
-            if let Ok(repo) = git2::Repository::open(&git_path) {
-                if let Ok(statuses) = repo.statuses(None) {
-                    if !statuses.is_empty() {
+            if let Ok(repo) = git2::Repository::open(&git_path)
+                && let Ok(statuses) = repo.statuses(None)
+                    && !statuses.is_empty() {
                         git_info.push('*');
                     }
-                }
-            }
             summary.push(git_info);
         } else {
             summary.push("Git: Unknown".to_string());
@@ -136,13 +134,11 @@ fn show_git_status(project_dir: &Path) {
                 let mut status_msg = format!("on branch {}", branch);
 
                 // Check for dirty state
-                if let Ok(repo) = git2::Repository::open(&git_path) {
-                    if let Ok(statuses) = repo.statuses(None) {
-                        if !statuses.is_empty() {
+                if let Ok(repo) = git2::Repository::open(&git_path)
+                    && let Ok(statuses) = repo.statuses(None)
+                        && !statuses.is_empty() {
                             status_msg.push_str(" (uncommitted changes)");
                         }
-                    }
-                }
 
                 ui::success(format!("  Git Repository: ✓ Initialized ({})", status_msg));
             }
@@ -208,15 +204,15 @@ async fn show_docker_status(project_dir: &Path) {
                         let plugin_dir = labels.get("com.interligent.dockerplugin.dir");
                         let compose_dir = labels.get("com.docker.compose.project.working_dir");
 
-                        let matches = if let Some(d) = compose_dir {
+                        
+
+                        if let Some(d) = compose_dir {
                             d.trim_end_matches('/') == project_dir_trimmed
                         } else if let Some(d) = plugin_dir {
                             d.trim_end_matches('/') == project_dir_trimmed
                         } else {
                             false
-                        };
-
-                        matches
+                        }
                     } else {
                         false
                     }

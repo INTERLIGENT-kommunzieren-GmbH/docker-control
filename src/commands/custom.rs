@@ -27,15 +27,14 @@ pub fn get_custom_commands(project_dir: &Path) -> Vec<CustomCommand> {
         if let Ok(entries) = fs::read_dir(path) {
             for entry in entries.flatten() {
                 let path = entry.path();
-                if path.extension().and_then(|s| s.to_str()) == Some("sh") {
-                    if let Some(name) = path.file_stem().and_then(|s| s.to_str()) {
+                if path.extension().and_then(|s| s.to_str()) == Some("sh")
+                    && let Some(name) = path.file_stem().and_then(|s| s.to_str()) {
                         let description = get_description(&path);
                         commands.push(CustomCommand {
                             name: name.to_string(),
                             description,
                         });
                     }
-                }
             }
         }
     }

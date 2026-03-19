@@ -119,8 +119,8 @@ fn find_ingress_dir() -> Result<PathBuf> {
     }
 
     // 3. Check relative to binary
-    if let Ok(exe_path) = std::env::current_exe() {
-        if let Some(exe_dir) = exe_path.parent() {
+    if let Ok(exe_path) = std::env::current_exe()
+        && let Some(exe_dir) = exe_path.parent() {
             let path = exe_dir.join("ingress");
             if path.exists() {
                 return Ok(path);
@@ -133,7 +133,6 @@ fn find_ingress_dir() -> Result<PathBuf> {
                 }
             }
         }
-    }
 
     // 3. Check current directory (for development)
     let path = PathBuf::from("ingress");

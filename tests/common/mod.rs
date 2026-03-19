@@ -2,21 +2,21 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use anyhow::Result;
+use tempfile::TempDir;
 
 pub struct TestRepo {
     pub root: PathBuf,
+    _temp: TempDir,
 }
 
 impl TestRepo {
     pub fn new(name: &str) -> Result<Self> {
-        let temp = std::env::temp_dir().join(format!("docker-control-test-{}", name));
-        if temp.exists() {
-            fs::remove_dir_all(&temp)?;
-        }
-        fs::create_dir_all(&temp)?;
+        let temp = tempfile::Builder::new()
+            .prefix(&format!("docker-control-test-{}-", name))
+            .tempdir()?;
         
-        let root = temp.join("project");
-        let origin = temp.join("origin.git");
+        let root = temp.path().join("project");
+        let origin = temp.path().join("origin.git");
         
         fs::create_dir_all(&root)?;
         fs::create_dir_all(&origin)?;
@@ -32,7 +32,10 @@ impl TestRepo {
         Self::git_run(&htdocs, &["config", "user.name", "Test User"])?;
         Self::git_run(&htdocs, &["remote", "add", "origin", &origin.to_string_lossy()])?;
         
-        Ok(Self { root })
+        Ok(Self {
+            root,
+            _temp: temp,
+        })
     }
 
     pub fn git_run(path: &Path, args: &[&str]) -> Result<()> {
@@ -71,13 +74,5 @@ impl TestRepo {
         Self::git_run(&htdocs, &["add", "."])?;
         Self::git_run(&htdocs, &["commit", "-m", message])?;
         Ok(())
-    }
-}
-
-impl Drop for TestRepo {
-    fn drop(&mut self) {
-        if let Some(parent) = self.root.parent() {
-            let _ = fs::remove_dir_all(parent);
-        }
     }
 }

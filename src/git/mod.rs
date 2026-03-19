@@ -42,11 +42,10 @@ impl GitService {
 
         for branch in local_branches {
             let (branch, _) = branch?;
-            if let Some(name) = branch.name()? {
-                if is_release_branch_name(name) {
+            if let Some(name) = branch.name()?
+                && is_release_branch_name(name) {
                     branches.push(name.to_string());
                 }
-            }
         }
 
         // Also check remote branches
@@ -55,13 +54,12 @@ impl GitService {
             let (branch, _) = branch?;
             if let Some(name) = branch.name()? {
                 // Strip remote prefix (e.g., origin/)
-                if let Some(short_name) = name.split('/').next_back() {
-                    if is_release_branch_name(short_name)
+                if let Some(short_name) = name.split('/').next_back()
+                    && is_release_branch_name(short_name)
                         && !branches.contains(&short_name.to_string())
                     {
                         branches.push(short_name.to_string());
                     }
-                }
             }
         }
 
@@ -305,8 +303,8 @@ impl GitService {
                 for sub_entry in std::fs::read_dir(&path)? {
                     let sub_entry = sub_entry?;
                     let sub_path = sub_entry.path();
-                    if sub_path.is_dir() && sub_path.join(".git").exists() {
-                        if let (Some(vendor), Some(module)) =
+                    if sub_path.is_dir() && sub_path.join(".git").exists()
+                        && let (Some(vendor), Some(module)) =
                             (path.file_name(), sub_path.file_name())
                         {
                             modules.push(format!(
@@ -315,7 +313,6 @@ impl GitService {
                                 module.to_string_lossy()
                             ));
                         }
-                    }
                 }
             }
         }
@@ -338,12 +335,11 @@ impl GitService {
         };
 
         for filename in &["CHANGELOG.md", "changelog.md", "CHANGELOG"] {
-            if let Ok(entry) = tree.get_path(Path::new(filename)) {
-                if let Ok(blob) = self.repo.find_blob(entry.id()) {
+            if let Ok(entry) = tree.get_path(Path::new(filename))
+                && let Ok(blob) = self.repo.find_blob(entry.id()) {
                     let content = String::from_utf8_lossy(blob.content());
                     return content.lines().take(20).collect::<Vec<_>>().join("\n");
                 }
-            }
         }
 
         format!("No changelog available for release {}", release)
@@ -357,12 +353,8 @@ impl GitService {
                 // We want to track an existing branch or create one with this name
                 if let Ok(local_branch) = self.repo.find_branch(b, BranchType::Local) {
                     Some(local_branch)
-                } else if let Ok(remote_branch) =
-                    self.repo.find_branch(&format!("origin/{}", b), BranchType::Remote)
-                {
-                    Some(remote_branch)
                 } else {
-                    None
+                    self.repo.find_branch(&format!("origin/{}", b), BranchType::Remote).ok()
                 }
             } else {
                 // We want to create a new branch 'name' based on 'b'
@@ -488,5 +480,59 @@ pub fn is_release_branch_name(name: &str) -> bool {
     parts[0].chars().all(|c| c.is_ascii_digit())
         && parts[1].chars().all(|c| c.is_ascii_digit())
         && parts[2] == "x"
+}
+
+pub fn get_docker_user_id() -> String {
+    #[cfg(unix)]
+    {
+        format!("{}:{}", unsafe { libc::getuid() }, unsafe {
+            libc::getgid()
+        })
+    }
+    #[cfg(not(unix))]
+    {
+        "1000:1000".to_string() // Fallback for non-unix
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum CleanupMode {
+    Always,
+    Keep,
+}
+
+pub struct WorktreeCleanup<'a> {
+    git_path: &'a Path,
+    worktree_path: std::path::PathBuf,
+    active: bool,
+}
+
+impl<'a> WorktreeCleanup<'a> {
+    pub fn new(git_path: &'a Path, worktree_path: std::path::PathBuf, mode: CleanupMode) -> Self {
+        Self {
+            git_path,
+            worktree_path,
+            active: matches!(mode, CleanupMode::Always),
+        }
+    }
+
+    pub fn cancel(&mut self) {
+        self.active = false;
+    }
+}
+
+impl<'a> Drop for WorktreeCleanup<'a> {
+    fn drop(&mut self) {
+        if self.active && self.worktree_path.exists() {
+            let _ = std::process::Command::new("git")
+                .arg("-C")
+                .arg(self.git_path)
+                .arg("worktree")
+                .arg("remove")
+                .arg("--force")
+                .arg(&self.worktree_path)
+                .status();
+        }
+    }
 }
 
