@@ -247,6 +247,11 @@ jobs:
         run: |
           dist host ${{ needs.plan.outputs.tag-flag }} --steps=create --output-format=json > dist-manifest.json
           echo "manifest=$(jq -c "." dist-manifest.json)" >> "$GITHUB_OUTPUT"
+          echo "announcement_is_prerelease=$(jq -r ".announcement_is_prerelease" dist-manifest.json)" >> "$GITHUB_OUTPUT"
+          echo "announcement_title=$(jq -r ".announcement_title" dist-manifest.json)" >> "$GITHUB_OUTPUT"
+          echo "announcement_github_body<<EOF" >> "$GITHUB_OUTPUT"
+          jq -r ".announcement_github_body" dist-manifest.json >> "$GITHUB_OUTPUT"
+          echo "EOF" >> "$GITHUB_OUTPUT"
       - name: "Upload dist-manifest.json"
         uses: actions/upload-artifact@v6
         with:
@@ -266,9 +271,9 @@ jobs:
           rm -f artifacts/*-dist-manifest.json
       - name: Create GitHub Release
         env:
-          PRERELEASE_FLAG: "${{ fromJson(steps.host.outputs.manifest).announcement_is_prerelease && '--prerelease' || '' }}"
-          ANNOUNCEMENT_TITLE: "${{ fromJson(steps.host.outputs.manifest).announcement_title }}"
-          ANNOUNCEMENT_BODY: "${{ fromJson(steps.host.outputs.manifest).announcement_github_body }}"
+          PRERELEASE_FLAG: "${{ steps.host.outputs.announcement_is_prerelease == 'true' && '--prerelease' || '' }}"
+          ANNOUNCEMENT_TITLE: "${{ steps.host.outputs.announcement_title }}"
+          ANNOUNCEMENT_BODY: "${{ steps.host.outputs.announcement_github_body }}"
           RELEASE_COMMIT: "${{ github.sha }}"
         run: |
           # Write and read notes from a file to avoid quoting breaking things
