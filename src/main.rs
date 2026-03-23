@@ -487,10 +487,10 @@ async fn async_main() -> anyhow::Result<()> {
         }
         Commands::Stop => {
             check_managed(&project_dir);
-            docker::execute_compose(&project_dir, &["stop"])?;
+            docker::execute_compose(&project_dir, &["down"])?;
         }
         Commands::StopIngress => {
-            docker::execute_ingress_compose(&["stop"])?;
+            docker::execute_ingress_compose(&["down"])?;
         }
         Commands::Update => {
             commands::update::execute(&project_dir)?;
