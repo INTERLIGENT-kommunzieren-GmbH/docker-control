@@ -4,15 +4,14 @@ use inquire::{Confirm, Select, Text};
 use std::fs;
 use std::net::TcpListener;
 use std::path::{Path, PathBuf};
+use crate::utils::is_managed;
 
 pub async fn execute(project_dir: &Path) -> Result<()> {
     ui::info("Initializing new project...");
 
     if project_dir.exists() && fs::read_dir(project_dir)?.next().is_some() {
         // Check if it's already managed
-        if project_dir
-            .join(".managed-by-docker-control")
-            .exists()
+        if is_managed(project_dir)
         {
             ui::warning("Directory is already managed by docker-control.");
             return Ok(());
@@ -54,7 +53,7 @@ pub async fn execute(project_dir: &Path) -> Result<()> {
 
     let sanitized_name = sanitize_name(&project_name);
 
-    let php_versions = vec!["7.4", "7.4-oci", "8.2", "8.2-oci", "8.4", "8.4-oci"];
+    let php_versions = vec!["7.4", "7.4-oci", "8.2", "8.2-oci", "8.5", "8.5-oci"];
     let php_version = Select::new("PHP Version", php_versions).prompt()?;
 
     // Find free port for DB
