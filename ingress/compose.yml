@@ -12,8 +12,8 @@ services:
     restart: always
     volumes:
       - "/var/run/docker.sock:/tmp/docker.sock:ro,z"
-      - "${PLUGIN_MOUNTS_DIR}/ingress/vhosts.d:/etc/nginx/vhost.d:ro"
-      - "${PLUGIN_MOUNTS_DIR}/ingress/tls:/etc/nginx/certs:ro"
+      - "./vhosts.d:/etc/nginx/vhost.d:ro"
+      - "./ingress/tls:/etc/nginx/certs:ro"
     logging:
       options:
         max-size: "100M"
@@ -31,7 +31,7 @@ services:
     restart: always
     volumes:
       - "/var/run/docker.sock:/var/run/docker.sock:ro,z"
-      - "${PLUGIN_MOUNTS_DIR}/ingress/tls:/etc/nginx/certs:rw"
+      - "./ingress/tls:/etc/nginx/certs:rw"
 
 networks:
   frontend-tier:

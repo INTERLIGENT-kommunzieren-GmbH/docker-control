@@ -44,7 +44,7 @@ brew install INTERLIGENT-kommunzieren-GmbH/tap/docker-control
 
 ## Usage
 
-To use the plugin, invoke `docker control <command>`.
+To use the plugin, invoke `docker-control <command>`.
 
 ### Global Options
 
@@ -52,7 +52,7 @@ To use the plugin, invoke `docker control <command>`.
 Specify the project directory (default: current directory).
 
 ```bash
-docker control --dir /path/to/project <command>
+docker-control --dir /path/to/project <command>
 ```
 
 ### Available Commands
@@ -61,163 +61,163 @@ docker control --dir /path/to/project <command>
 Add deployment configuration for environments.
 
 ```bash
-docker control add-deploy-config
+docker-control add-deploy-config
 ```
 
 #### `build [options]`
 Build the Docker containers for the project. Accepts all docker-compose build options.
 
 ```bash
-docker control build
-docker control build --no-cache
+docker-control build
+docker-control build --no-cache
 ```
 
 #### `console [container]`
 Open a bash shell inside a container. Defaults to the `php` container if no container name is provided. For the `php` container, opens as `www-data` user.
 
 ```bash
-docker control console
-docker control console php
-docker control console db
+docker-control console
+docker-control console php
+docker-control console db
 ```
 
 #### `create-control-script <name>`
 Create a custom control script with the specified name.
 
 ```bash
-docker control create-control-script my-command
+docker-control create-control-script my-command
 ```
 
 #### `deploy <env>`
 Deploy a selected release to the specified environment. The release/tag is selected interactively from available options. Includes comprehensive error handling, configuration validation, and deployment confirmation.
 
 ```bash
-docker control deploy production
-docker control deploy staging
+docker-control deploy production
+docker-control deploy staging
 ```
 
 #### `help`
 Show help message with all available commands and comprehensive project status information including git repository state, deployment configuration, and Docker container status.
 
 ```bash
-docker control help
+docker-control help
 ```
 
 #### `init`
 Initialize an empty directory with the project template, creating a `.env` file and setting up the PHP version and database port. Only works in empty directories.
 
 ```bash
-docker control init
+docker-control init
 ```
 
 #### `merge`
 Merge release branch to main using selective cherry-pick workflow. Excludes release-specific commits (those with "release:" prefix) and provides interactive conflict resolution with merge tool support. Each commit is pushed immediately after successful cherry-pick.
 
 ```bash
-docker control merge
+docker-control merge
 ```
 
 #### `pull`
 Pull the latest Docker images for the project.
 
 ```bash
-docker control pull
+docker-control pull
 ```
 
 #### `pull-ingress`
 Pull the latest ingress-related Docker images.
 
 ```bash
-docker control pull-ingress
+docker-control pull-ingress
 ```
 
 #### `release`
 Create a new release branch with automated versioning and composer.lock generation. Includes comprehensive error handling, user feedback, and displays the created release information upon completion.
 
 ```bash
-docker control release
+docker-control release
 ```
 
 #### `restart`
 Restart the project containers (stops and starts them).
 
 ```bash
-docker control restart
+docker-control restart
 ```
 
 #### `restart-ingress`
 Restart the ingress containers (stops and starts them).
 
 ```bash
-docker control restart-ingress
+docker-control restart-ingress
 ```
 
 #### `show-running`
 Show all running projects managed by the Docker plugin.
 
 ```bash
-docker control show-running
+docker-control show-running
 ```
 
 #### `start`
 Start the project containers in detached mode.
 
 ```bash
-docker control start
+docker-control start
 ```
 
 #### `start-ingress`
 Start the ingress containers in detached mode.
 
 ```bash
-docker control start-ingress
+docker-control start-ingress
 ```
 
 #### `status`
 Show the status of the project containers.
 
 ```bash
-docker control status
+docker-control status
 ```
 
 #### `status-ingress`
 Show the status of the ingress containers.
 
 ```bash
-docker control status-ingress
+docker-control status-ingress
 ```
 
 #### `stop`
 Stop the project containers.
 
 ```bash
-docker control stop
+docker-control stop
 ```
 
 #### `stop-ingress`
 Stop the ingress containers.
 
 ```bash
-docker control stop-ingress
+docker-control stop-ingress
 ```
 
 #### `update`
 Update the project with the current template, creating a backup of the existing files, then restart containers.
 
 ```bash
-docker control update
+docker-control update
 ```
 
 #### `version`
 Show version information for the CLI plugin.
 
 ```bash
-docker control version
+docker-control version
 ```
 
 ### Custom Commands
 
-The plugin supports custom commands that can be created using the `create-control-script` command. These commands are stored in the `control-scripts` directory of your project and can be executed using `docker control <command-name>`.
+The plugin supports custom commands that can be created using the `create-control-script` command. These commands are stored in the `control-scripts` directory of your project and can be executed using `docker-control <command-name>`.
 
 Custom commands will appear in the help output with their descriptions. To set a description for your custom command, modify the echo statement in the `_desc_` section of your script.
 
@@ -306,7 +306,7 @@ The `release` command provides automated release branch creation with:
 
 ### Project Status Information
 
-When you run `docker control help`, you'll see comprehensive project status information including:
+When you run `docker-control help`, you'll see comprehensive project status information including:
 
 #### Project Directory Status
 - **Current project directory path**
