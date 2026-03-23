@@ -119,18 +119,26 @@ fn find_ingress_dir() -> Result<PathBuf> {
     }
 
     // 3. Check relative to binary
-    if let Ok(exe_path) = std::env::current_exe()
-        && let Some(exe_dir) = exe_path.parent()
-    {
-        let path = exe_dir.join("ingress");
-        if path.exists() {
-            return Ok(path);
-        }
-        // Check one level up (if binary is in a bin/ folder)
-        if let Some(parent) = exe_dir.parent() {
-            let path = parent.join("ingress");
+    if let Ok(exe_path) = std::env::current_exe() {
+        let real_exe_path = exe_path.canonicalize().unwrap_or(exe_path);
+        if let Some(exe_dir) = real_exe_path.parent() {
+            // Check for direct ingress/ folder
+            let path = exe_dir.join("ingress");
             if path.exists() {
                 return Ok(path);
+            }
+            // Check one level up (if binary is in a bin/ folder)
+            if let Some(parent) = exe_dir.parent() {
+                // Check parent/ingress
+                let path = parent.join("ingress");
+                if path.exists() {
+                    return Ok(path);
+                }
+                // Check parent/share/docker-control/ingress (Homebrew standard)
+                let path = parent.join("share").join("docker-control").join("ingress");
+                if path.exists() {
+                    return Ok(path);
+                }
             }
         }
     }

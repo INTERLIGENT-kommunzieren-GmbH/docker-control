@@ -10,6 +10,7 @@ static INGRESS_DIR: Dir = include_dir!("$CARGO_MANIFEST_DIR/ingress");
 
 pub struct AssetManager {
     config_dir: PathBuf,
+    share_dir: Option<PathBuf>,
 }
 
 impl AssetManager {
@@ -21,18 +22,56 @@ impl AssetManager {
         // On Linux this is ~/.config/docker-control
         let config_dir = proj_dirs.config_dir().to_path_buf();
 
-        Ok(Self { config_dir })
+        // Try to find share directory relative to executable
+        let mut share_dir = None;
+        if let Ok(exe_path) = std::env::current_exe() {
+            // Follow symlinks to get the real path (important for Homebrew)
+            if let Ok(real_exe_path) = exe_path.canonicalize() {
+                if let Some(exe_dir) = real_exe_path.parent() {
+                    // Binary is in 'bin/', share is in '../share/docker-control/'
+                    let potential_share = exe_dir.parent().map(|p| p.join("share").join("docker-control"));
+                    if let Some(path) = potential_share {
+                        if path.exists() {
+                            ui::debug(format!("Found installed assets at {:?}", path));
+                            share_dir = Some(path);
+                        }
+                    }
+                }
+            }
+        }
+
+        Ok(Self {
+            config_dir,
+            share_dir,
+        })
     }
 
     pub fn get_template_dir(&self) -> PathBuf {
+        if let Some(ref share) = self.share_dir {
+            let path = share.join("template");
+            if path.exists() {
+                return path;
+            }
+        }
         self.config_dir.join("template")
     }
 
     pub fn get_ingress_dir(&self) -> PathBuf {
+        if let Some(ref share) = self.share_dir {
+            let path = share.join("ingress");
+            if path.exists() {
+                return path;
+            }
+        }
         self.config_dir.join("ingress")
     }
 
     pub fn ensure_assets(&self) -> Result<()> {
+        // If we are using share_dir, we don't need to extract assets to config_dir
+        if self.share_dir.is_some() {
+            return Ok(());
+        }
+
         let version_file = self.config_dir.join(".version");
         let current_version = env!("CARGO_PKG_VERSION");
 
