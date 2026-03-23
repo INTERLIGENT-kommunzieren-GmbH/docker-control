@@ -9,11 +9,11 @@ services:
     ports:
       - "80:80"
       - "443:443"
-    restart: always
+    restart: no
     volumes:
       - "/var/run/docker.sock:/tmp/docker.sock:ro,z"
-      - "./vhosts.d:/etc/nginx/vhost.d:ro"
-      - "./ingress/tls:/etc/nginx/certs:ro"
+      - "./volumes/vhosts.d:/etc/nginx/vhost.d:ro"
+      - "./volumes/tls:/etc/nginx/certs:ro"
     logging:
       options:
         max-size: "100M"
@@ -28,10 +28,10 @@ services:
       NGINX_PROXY_CONTAINER: nginx-proxy
     networks:
       - "frontend-tier"
-    restart: always
+    restart: no
     volumes:
       - "/var/run/docker.sock:/var/run/docker.sock:ro,z"
-      - "./ingress/tls:/etc/nginx/certs:rw"
+      - "./volumes/tls:/etc/nginx/certs:rw"
 
 networks:
   frontend-tier:
