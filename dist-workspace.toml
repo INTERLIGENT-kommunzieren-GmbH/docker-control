@@ -11,10 +11,13 @@ ci = "github"
 # The installers to generate for each app
 installers = ["homebrew"]
 # A GitHub repo to push Homebrew formulas to
-tap = "INTERLIGENT-kommunzieren-GmbH/homebrew-docker-control"
+tap = "INTERLIGENT-kommunzieren-GmbH/homebrew-tap"
 # Publish jobs to run in CI
 publish-jobs = ["homebrew"]
 # Target platforms to build apps for (Rust target-triple syntax)
-targets = ["aarch64-apple-darwin", "aarch64-unknown-linux-gnu", "x86_64-apple-darwin", "x86_64-unknown-linux-gnu"]
+targets = ["aarch64-apple-darwin", "aarch64-unknown-linux-gnu", "x86_64-unknown-linux-gnu"]
 # Extra static files to include in each App (path relative to this Cargo.toml's dir)
 include = ["template", "ingress/"]
+
+[dist.bin-aliases]
+docker-control = ["dc2"]

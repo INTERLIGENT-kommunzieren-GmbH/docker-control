@@ -9,7 +9,7 @@ echo "=== Docker Control Plugin - Module Support Demo ==="
 echo
 
 # Check if we're in a docker control project
-if [[ ! -f ".managed-by-docker-control-plugin" ]]; then
+if [[ ! -f ".managed-by-docker-control" ]]; then
     echo "❌ This demo must be run from a docker control managed project directory"
     echo "   Please run 'docker control init' first to create a project"
     exit 1

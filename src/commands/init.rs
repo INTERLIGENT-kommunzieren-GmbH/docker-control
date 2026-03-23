@@ -11,7 +11,7 @@ pub async fn execute(project_dir: &Path) -> Result<()> {
     if project_dir.exists() && fs::read_dir(project_dir)?.next().is_some() {
         // Check if it's already managed
         if project_dir
-            .join(".managed-by-docker-control-plugin")
+            .join(".managed-by-docker-control")
             .exists()
         {
             ui::warning("Directory is already managed by docker-control.");

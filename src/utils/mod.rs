@@ -31,6 +31,6 @@ pub fn stop_ssh_agent() -> Result<()> {
 
 pub fn is_managed(project_dir: &Path) -> bool {
     project_dir
-        .join(".managed-by-docker-control-plugin")
+        .join(".managed-by-docker-control")
         .exists()
 }

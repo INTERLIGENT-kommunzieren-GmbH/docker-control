@@ -1,7 +1,7 @@
 #!/bin/bash
 set -e
 
-REPO="INTERLIGENT-kommunzieren-GmbH/docker-plugin"
+REPO="INTERLIGENT-kommunzieren-GmbH/docker-control"
 BINARY_NAME="docker-control"
 CLI_PLUGIN_PATH="$HOME/.docker/cli-plugins"
 

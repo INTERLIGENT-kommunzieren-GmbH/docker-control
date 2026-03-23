@@ -1,18 +1,18 @@
-# IK Docker Control CLI Plugin
+# IK Docker Control
 
-A Docker CLI plugin for controlling the `ik` Docker stack, providing an easy way to manage your Docker containers and perform common operations like building, starting, stopping, and accessing the containers.
+A Docker command for controlling the `ik` Docker stack, providing an easy way to manage your Docker containers and perform common operations like building, starting, stopping, and accessing the containers.
 
 ## Installation
 
-To install the plugin, simply run the `install.sh` script, which will automatically set up the necessary files and make the plugin executable.
+To install the plugin, simply install it via homebrew.
 
 ### Example:
 
 ```bash
-curl -sL https://raw.githubusercontent.com/INTERLIGENT-kommunzieren-GmbH/docker-plugin/main/install.sh | bash
+brew install INTERLIGENT-kommunzieren-GmbH/tap/docker-control
 ```
 
-This will install the plugin into `~/.docker/cli-plugins`, making it accessible with the `docker control` command.
+This will install and making it accessible with the `docker-control` command.
 
 ## Development and Testing
 
@@ -30,15 +30,17 @@ cargo test
 
 ### Installation
 
-To install the native binary locally:
+If you do not have homebrew installed, install it:
 
 ```bash
-cargo build --release
-cp target/release/docker-control ~/.docker/cli-plugins/docker-control
-chmod +x ~/.docker/cli-plugins/docker-control
+/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
 ```
 
-Alternatively, you can use the `install.sh` script to download and install the latest release.
+To install the native binary via homebrew:
+
+```bash
+brew install INTERLIGENT-kommunzieren-GmbH/tap/docker-control
+```
 
 ## Usage
 
@@ -233,7 +235,7 @@ exit 0
 
 ### Project Management
 
-The plugin requires projects to be managed by the Docker control plugin (identified by a `.managed-by-docker-control-plugin` file). Most commands will check for this file and exit with an error if the current directory is not a managed project.
+The plugin requires projects to be managed by the Docker control plugin (identified by a `.managed-by-docker-control` file). Most commands will check for this file and exit with an error if the current directory is not a managed project.
 
 ### Deployment Configuration
 

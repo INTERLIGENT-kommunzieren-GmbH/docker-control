@@ -109,7 +109,7 @@ impl DeployConfig {
             metadata: Some(Metadata {
                 created_at: now.clone(),
                 last_modified: now,
-                created_by: "docker-control-plugin".to_string(),
+                created_by: "docker-control".to_string(),
             }),
         }
     }

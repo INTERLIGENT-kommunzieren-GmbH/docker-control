@@ -1,10 +1,10 @@
 [package]
 name = "docker-control"
-version = "2.0.0"
+version = "2.0.1"
 edition = "2024"
 description = "a CLI tool to control ik docker stack"
-homepage = "https://github.com/INTERLIGENT-kommunzieren-GmbH/docker-plugin"
-repository = "git@github.com:INTERLIGENT-kommunzieren-GmbH/docker-plugin.git"
+homepage = "https://github.com/INTERLIGENT-kommunzieren-GmbH/docker-control"
+repository = "git@github.com:INTERLIGENT-kommunzieren-GmbH/docker-control.git"
 
 [dependencies]
 anyhow = "1.0.102"
