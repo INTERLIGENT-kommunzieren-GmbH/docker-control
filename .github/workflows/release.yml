@@ -326,7 +326,7 @@ jobs:
             sed -i '$d' "Formula/${filename}"
             cat <<'EOF' >> "Formula/${filename}"
             def post_install
-              ingress_volumes_dir = Pathname.new(ENV["HOME"]).join(".config/docker-control/ingress/volumes")
+              ingress_volumes_dir = HOMEBREW_PREFIX/"etc/docker-control/ingress/volumes"
               ingress_volumes_dir.mkpath
 
               # Copy ingress volume assets from share to the stable config directory

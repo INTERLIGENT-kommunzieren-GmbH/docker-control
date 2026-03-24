@@ -115,3 +115,15 @@ fn get_docker0_ip() -> Option<String> {
 
     None
 }
+
+pub fn get_brew_prefix() -> Option<String> {
+    if let Ok(output) = Command::new("brew").arg("--prefix").output() {
+        if output.status.success() {
+            let prefix = String::from_utf8_lossy(&output.stdout).trim().to_string();
+            if !prefix.is_empty() {
+                return Some(prefix);
+            }
+        }
+    }
+    None
+}

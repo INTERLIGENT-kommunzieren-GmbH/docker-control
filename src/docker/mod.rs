@@ -1,4 +1,5 @@
 use crate::ui;
+use crate::utils::platform;
 use anyhow::{Context, Result, anyhow};
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -31,12 +32,20 @@ pub fn execute_ingress_compose(args: &[&str]) -> Result<()> {
         ));
     }
 
+    let brew_prefix = std::env::var("HOMEBREW_PREFIX")
+        .ok()
+        .or_else(platform::get_brew_prefix)
+        .unwrap_or_else(|| "/usr/local".to_string());
+
+    ui::debug(format!("Using HOMEBREW_PREFIX: {}", brew_prefix));
+
     let mut cmd = Command::new("docker");
     cmd.arg("compose")
         .arg("--project-directory")
         .arg(&ingress_dir)
         .arg("-f")
         .arg(&compose_file)
+        .env("HOMEBREW_PREFIX", brew_prefix)
         .args(args);
 
     let status = cmd
