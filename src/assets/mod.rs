@@ -26,16 +26,18 @@ impl AssetManager {
         let mut share_dir = None;
         if let Ok(exe_path) = std::env::current_exe() {
             // Follow symlinks to get the real path (important for Homebrew)
-            if let Ok(real_exe_path) = exe_path.canonicalize() {
-                if let Some(exe_dir) = real_exe_path.parent() {
-                    // Binary is in 'bin/', share is in '../share/docker-control/'
-                    let potential_share = exe_dir.parent().map(|p| p.join("share").join("docker-control"));
-                    if let Some(path) = potential_share {
-                        if path.exists() {
-                            ui::debug(format!("Found installed assets at {:?}", path));
-                            share_dir = Some(path);
-                        }
-                    }
+            if let Ok(real_exe_path) = exe_path.canonicalize()
+                && let Some(exe_dir) = real_exe_path.parent()
+            {
+                // Binary is in 'bin/', share is in '../share/docker-control/'
+                let potential_share = exe_dir
+                    .parent()
+                    .map(|p| p.join("share").join("docker-control"));
+                if let Some(path) = potential_share
+                    && path.exists()
+                {
+                    ui::debug(format!("Found installed assets at {:?}", path));
+                    share_dir = Some(path);
                 }
             }
         }

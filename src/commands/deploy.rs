@@ -320,11 +320,7 @@ async fn perform_deployment(ctx: DeploymentContext<'_>) -> Result<()> {
         ctx.maintenance_mode.to_string()
     } else {
         Select::new("Select maintenance mode", vec!["hard", "soft"])
-            .with_starting_cursor(if ctx.maintenance_mode == "soft" {
-                1
-            } else {
-                0
-            })
+            .with_starting_cursor(if ctx.maintenance_mode == "soft" { 1 } else { 0 })
             .prompt()?
             .to_string()
     };
@@ -464,13 +460,7 @@ async fn perform_deployment(ctx: DeploymentContext<'_>) -> Result<()> {
         ctx.project_dir,
         ctx.env_name,
         "post_deploy_hook",
-        vec![
-            user,
-            domain,
-            ctx.server_root,
-            ctx.release_dir,
-            &console_new,
-        ],
+        vec![user, domain, ctx.server_root, ctx.release_dir, &console_new],
     )?;
 
     ui::info("Basic deployment done. You can now run custom commands on the server.");
@@ -543,13 +533,7 @@ async fn perform_deployment(ctx: DeploymentContext<'_>) -> Result<()> {
         ctx.project_dir,
         ctx.env_name,
         "done_deploy_hook",
-        vec![
-            user,
-            domain,
-            ctx.server_root,
-            ctx.release_dir,
-            &console_new,
-        ],
+        vec![user, domain, ctx.server_root, ctx.release_dir, &console_new],
     )?;
 
     Ok(())

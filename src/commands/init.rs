@@ -1,18 +1,17 @@
 use crate::ui;
+use crate::utils::is_managed;
 use anyhow::{Result, anyhow};
 use inquire::{Confirm, Select, Text};
 use std::fs;
 use std::net::TcpListener;
 use std::path::{Path, PathBuf};
-use crate::utils::is_managed;
 
 pub async fn execute(project_dir: &Path) -> Result<()> {
     ui::info("Initializing new project...");
 
     if project_dir.exists() && fs::read_dir(project_dir)?.next().is_some() {
         // Check if it's already managed
-        if is_managed(project_dir)
-        {
+        if is_managed(project_dir) {
             ui::warning("Directory is already managed by docker-control.");
             return Ok(());
         }

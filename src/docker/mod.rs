@@ -39,6 +39,13 @@ pub fn execute_ingress_compose(args: &[&str]) -> Result<()> {
 
     ui::debug(format!("Using HOMEBREW_PREFIX: {}", brew_prefix));
 
+    // Ensure ingress volumes are up to date when starting
+    if args.contains(&"up")
+        && let Err(e) = ensure_ingress_volumes(&brew_prefix)
+    {
+        ui::warning(format!("Failed to ensure ingress volumes: {}", e));
+    }
+
     let mut cmd = Command::new("docker");
     cmd.arg("compose")
         .arg("--project-directory")
@@ -56,6 +63,39 @@ pub fn execute_ingress_compose(args: &[&str]) -> Result<()> {
         return Err(anyhow!(
             "docker compose ingress failed with status {}",
             status
+        ));
+    }
+
+    Ok(())
+}
+
+fn ensure_ingress_volumes(brew_prefix: &str) -> Result<()> {
+    let prefix = PathBuf::from(brew_prefix);
+
+    // Source: prefix/share/docker-control/ingress/volumes
+    let src = prefix
+        .join("share")
+        .join("docker-control")
+        .join("ingress")
+        .join("volumes");
+
+    // Target: prefix/etc/docker-control/ingress/volumes
+    let dst = prefix
+        .join("etc")
+        .join("docker-control")
+        .join("ingress")
+        .join("volumes");
+
+    if src.exists() {
+        ui::debug(format!(
+            "Syncing ingress volumes from {:?} to {:?}",
+            src, dst
+        ));
+        crate::utils::copy_dir_all(&src, &dst)?;
+    } else {
+        ui::debug(format!(
+            "Source ingress volumes directory not found at {:?}",
+            src
         ));
     }
 

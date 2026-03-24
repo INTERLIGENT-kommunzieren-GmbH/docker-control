@@ -1,4 +1,4 @@
-use anyhow::Result;
+use anyhow::{Context, Result};
 use std::path::Path;
 
 pub mod forwarding;
@@ -34,4 +34,48 @@ pub fn is_managed(project_dir: &Path) -> bool {
         .join(".managed-by-docker-control-plugin")
         .exists()
         || project_dir.join(".managed-by-docker-control").exists()
+}
+
+pub fn copy_dir_all(src: impl AsRef<Path>, dst: impl AsRef<Path>) -> Result<()> {
+    let src = src.as_ref();
+    let dst = dst.as_ref();
+
+    std::fs::create_dir_all(dst).context(format!("Failed to create directory {:?}", dst))?;
+
+    for entry in std::fs::read_dir(src).context(format!("Failed to read directory {:?}", src))? {
+        let entry = entry?;
+        let ty = entry.file_type()?;
+        if ty.is_dir() {
+            copy_dir_all(entry.path(), dst.join(entry.file_name()))?;
+        } else {
+            let src_path = entry.path();
+            let dst_path = dst.join(entry.file_name());
+
+            if dst_path.exists() {
+                let src_hash = hash_file(&src_path)?;
+                let dst_hash = hash_file(&dst_path)?;
+
+                if src_hash != dst_hash {
+                    std::fs::copy(&src_path, &dst_path).context(format!(
+                        "Failed to copy file from {:?} to {:?}",
+                        src_path, dst_path
+                    ))?;
+                }
+            } else {
+                std::fs::copy(&src_path, &dst_path).context(format!(
+                    "Failed to copy file from {:?} to {:?}",
+                    src_path, dst_path
+                ))?;
+            }
+        }
+    }
+    Ok(())
+}
+
+pub fn hash_file(path: impl AsRef<Path>) -> Result<String> {
+    let content = std::fs::read(path)?;
+    use sha2::{Digest, Sha256};
+    let mut hasher = Sha256::new();
+    hasher.update(content);
+    Ok(format!("{:x}", hasher.finalize()))
 }
