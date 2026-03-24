@@ -319,7 +319,27 @@ jobs:
 
             export PATH="/home/linuxbrew/.linuxbrew/bin:$PATH"
             brew update
-            # We avoid reformatting user-provided data such as the app description and homepage.
+            
+            # Inject post_install hook to handle stable ingress volumes
+            # This creates the config directory and copies volume files from share to config
+            # It uses heredoc to safely append the logic before the last end of the class
+            sed -i '$d' "Formula/${filename}"
+            cat <<'EOF' >> "Formula/${filename}"
+            def post_install
+              ingress_volumes_dir = Pathname.new("#{Dir.home}/.config/docker-control/ingress/volumes")
+              ingress_volumes_dir.mkpath
+
+              # Copy ingress volume assets from share to the stable config directory
+              # Overwrites existing files to ensure updates are propagated
+              share_ingress_volumes = prefix/"share/docker-control/ingress/volumes"
+              if share_ingress_volumes.exist?
+                # Using FileUtils.cp_r with source/. will copy contents and overwrite
+                FileUtils.cp_r(share_ingress_volumes/".", ingress_volumes_dir, :verbose => true, :remove_destination => false)
+              end
+            end
+            end
+            EOF
+
             brew style --except-cops FormulaAudit/Homepage,FormulaAudit/Desc,FormulaAuditStrict --fix "Formula/${filename}" || true
 
             git add "Formula/${filename}"
