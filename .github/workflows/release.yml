@@ -333,8 +333,8 @@ jobs:
               # Overwrites existing files to ensure updates are propagated
               share_ingress_volumes = prefix/"share/docker-control/ingress/volumes"
               if share_ingress_volumes.exist?
-                # Using FileUtils.cp_r with source/. will copy contents and overwrite
-                FileUtils.cp_r(share_ingress_volumes/".", ingress_volumes_dir, :verbose => true, :remove_destination => false)
+                # Using cp_r with source/. will copy contents and overwrite
+                cp_r(share_ingress_volumes/".", ingress_volumes_dir, :verbose => true, :remove_destination => false)
               end
             end
           end
