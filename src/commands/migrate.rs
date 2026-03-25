@@ -19,7 +19,7 @@ pub async fn execute(project_dir: &Path) -> Result<()> {
     // 1. Stop the project using "control.cmd stop"
     ui::info("Stopping project using control.cmd stop...");
     let status = Command::new("bash")
-        .arg("control.cmd")
+        .arg("./control.cmd")
         .arg("stop")
         .current_dir(project_dir)
         .status()
@@ -83,7 +83,7 @@ pub async fn execute(project_dir: &Path) -> Result<()> {
         }
     }
 
-    // 3. Copy template folder contents to the folder like update does
+    // 3. Copy template folder contents (including volumes/ and build/)
     ui::info("Applying new template...");
     let asset_manager = AssetManager::new()?;
     asset_manager.ensure_assets()?;
@@ -91,10 +91,6 @@ pub async fn execute(project_dir: &Path) -> Result<()> {
 
     let status = Command::new("rsync")
         .arg("-a")
-        .arg("--exclude")
-        .arg("logs")
-        .arg("--exclude")
-        .arg("volumes")
         .arg(format!("{}/", template_dir.to_string_lossy()))
         .arg("./")
         .current_dir(project_dir)
