@@ -3,6 +3,7 @@ use std::path::Path;
 
 pub mod forwarding;
 pub mod platform;
+pub mod dependencies;
 
 pub fn stop_ssh_agent() -> Result<()> {
     let pid_file = "/tmp/docker-control-ssh-agent.pid";

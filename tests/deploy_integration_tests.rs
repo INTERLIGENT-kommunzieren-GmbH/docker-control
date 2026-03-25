@@ -92,6 +92,7 @@ async fn test_successful_deploy() -> Result<()> {
             ),
         )
         .env("DOCKER_CONTROL_SKIP_SSH_AGENT", "1")
+        .env("DOCKER_CONTROL_SKIP_DEPENDENCY_CHECK", "1")
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()
@@ -196,6 +197,7 @@ async fn test_failed_deploy_ssh_error() -> Result<()> {
             ),
         )
         .env("DOCKER_CONTROL_SKIP_SSH_AGENT", "1")
+        .env("DOCKER_CONTROL_SKIP_DEPENDENCY_CHECK", "1")
         .env("FAIL_SSH", "1") // Trigger SSH failure
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -278,6 +280,7 @@ async fn test_failed_deploy_cops_error_non_interactive() -> Result<()> {
             ),
         )
         .env("DOCKER_CONTROL_SKIP_SSH_AGENT", "1")
+        .env("DOCKER_CONTROL_SKIP_DEPENDENCY_CHECK", "1")
         .env("FAIL_SSH", "1") // We'll use FAIL_SSH to make the COPS command fail
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())

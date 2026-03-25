@@ -214,6 +214,23 @@ async fn async_main() -> anyhow::Result<()> {
         ui::set_debug(true);
     }
 
+    // Return early if metadata is requested, no dependencies needed
+    if let Some(Commands::Metadata) = cli.command {
+        let metadata = serde_json::json!({
+            "SchemaVersion": "2.0.0",
+            "Vendor": "INTERLIGENT kommunizieren GmbH",
+            "Version": env!("CARGO_PKG_VERSION"),
+            "ShortDescription": "IK Docker Control CLI Plugin"
+        });
+        println!("{}", serde_json::to_string(&metadata).unwrap());
+        return Ok(());
+    }
+
+    // Check external dependencies
+    if std::env::var("DOCKER_CONTROL_SKIP_DEPENDENCY_CHECK").is_err() {
+        utils::dependencies::check_dependencies()?;
+    }
+
     // Check for help flags early to show status in help
     let args: Vec<String> = std::env::args().collect();
     let is_help = args
@@ -278,16 +295,6 @@ async fn async_main() -> anyhow::Result<()> {
         return Ok(());
     }
 
-    if let Some(Commands::Metadata) = cli.command {
-        let metadata = serde_json::json!({
-            "SchemaVersion": "2.0.0",
-            "Vendor": "INTERLIGENT kommunizieren GmbH",
-            "Version": env!("CARGO_PKG_VERSION"),
-            "ShortDescription": "IK Docker Control CLI Plugin"
-        });
-        println!("{}", serde_json::to_string(&metadata).unwrap());
-        return Ok(());
-    }
 
     if cli.stop_ssh_agent {
         if let Err(e) = docker_control::utils::stop_ssh_agent() {
