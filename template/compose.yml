@@ -36,7 +36,7 @@ services:
       - "./config/mariadb.cnf:/etc/mysql/conf.d/default.cnf"
       - "./volumes/db/data:/var/lib/mysql:cached"
       - "./volumes/db/init:/docker-entrypoint-initdb.d:cached"
-      - "./logs/mysql:/var/log/mysql"
+      - "./logs/mariadb:/var/log/mysql"
       - "./volumes/db-share:/db-share"
 
   phpmyadmin:
