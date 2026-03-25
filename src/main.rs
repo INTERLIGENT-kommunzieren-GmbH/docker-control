@@ -205,17 +205,36 @@ fn main() {
 }
 
 async fn async_main() -> anyhow::Result<()> {
-    let cmd = Cli::command().styles(get_help_styles());
+    let args: Vec<String> = std::env::args().collect();
 
-    let matches = cmd.get_matches();
-    let cli = Cli::from_arg_matches(&matches).unwrap_or_else(|e| e.exit());
+    // Check for help flags early to show status in help
+    let is_help = args
+        .iter()
+        .any(|arg| arg == "--help" || arg == "-h" || arg == "help");
 
-    if cli.debug {
-        ui::set_debug(true);
+    // Check for version early
+    if args.iter().any(|arg| arg == "--version" || arg == "-V") {
+        println!("docker-control {}", env!("CARGO_PKG_VERSION"));
+        return Ok(());
     }
 
+    // Manually parse dir for metadata and help
+    let mut project_dir = std::env::current_dir().expect("Failed to get current directory");
+    for i in 0..args.len() {
+        if (args[i] == "--dir" || args[i] == "-d") && i + 1 < args.len() {
+            project_dir = PathBuf::from(&args[i + 1]);
+            break;
+        }
+    }
+
+    let project_dir = if project_dir.exists() {
+        project_dir.canonicalize().unwrap_or(project_dir)
+    } else {
+        project_dir
+    };
+
     // Return early if metadata is requested, no dependencies needed
-    if let Some(Commands::Metadata) = cli.command {
+    if args.iter().any(|arg| arg == "docker-cli-plugin-metadata") {
         let metadata = serde_json::json!({
             "SchemaVersion": "2.0.0",
             "Vendor": "INTERLIGENT kommunizieren GmbH",
@@ -226,33 +245,7 @@ async fn async_main() -> anyhow::Result<()> {
         return Ok(());
     }
 
-    // Check external dependencies
-    if std::env::var("DOCKER_CONTROL_SKIP_DEPENDENCY_CHECK").is_err() {
-        utils::dependencies::check_dependencies()?;
-    }
-
-    // Check for help flags early to show status in help
-    let args: Vec<String> = std::env::args().collect();
-    let is_help = args
-        .iter()
-        .any(|arg| arg == "--help" || arg == "-h" || arg == "help");
-
     if is_help {
-        // Manually parse dir for status summary in help
-        let mut project_dir = std::env::current_dir().expect("Failed to get current directory");
-        for i in 0..args.len() {
-            if (args[i] == "--dir" || args[i] == "-d") && i + 1 < args.len() {
-                project_dir = PathBuf::from(&args[i + 1]);
-                break;
-            }
-        }
-
-        let project_dir = if project_dir.exists() {
-            project_dir.canonicalize().unwrap_or(project_dir)
-        } else {
-            project_dir
-        };
-
         let summary = commands::status::get_summary(&project_dir).await;
         let status_line = format!("{}: {}", ui::yellow("Project Status"), ui::cyan(summary));
         println!("{}\n", status_line);
@@ -293,6 +286,19 @@ async fn async_main() -> anyhow::Result<()> {
             .unwrap();
         println!();
         return Ok(());
+    }
+
+    let cmd = Cli::command().styles(get_help_styles());
+    let matches = cmd.try_get_matches()?;
+    let cli = Cli::from_arg_matches(&matches).unwrap_or_else(|e| e.exit());
+
+    if cli.debug {
+        ui::set_debug(true);
+    }
+
+    // Check external dependencies
+    if std::env::var("DOCKER_CONTROL_SKIP_DEPENDENCY_CHECK").is_err() {
+        utils::dependencies::check_dependencies()?;
     }
 
 
@@ -532,13 +538,21 @@ fn execute_external_script(project_dir: &std::path::Path, args: Vec<String>) -> 
     let command_name = &args[0];
     let command_args = &args[1..];
 
-    let paths = vec![
+    let mut paths = vec![
         project_dir.join(format!(
-            "htdocs/.docker-control/control-scripts/{}.sh",
+            "htdocs/.docker-control/control-scripts/{}",
             command_name
         )),
-        project_dir.join(format!("control-scripts/{}.sh", command_name)),
+        project_dir.join(format!("control-scripts/{}", command_name)),
     ];
+
+    if !command_name.ends_with(".sh") {
+        paths.push(project_dir.join(format!(
+            "htdocs/.docker-control/control-scripts/{}.sh",
+            command_name
+        )));
+        paths.push(project_dir.join(format!("control-scripts/{}.sh", command_name)));
+    }
 
     for path in paths {
         if path.exists() {
