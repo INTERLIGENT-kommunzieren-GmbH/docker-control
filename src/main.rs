@@ -108,6 +108,9 @@ enum Commands {
     Stop,
     /// Stop the ingress containers
     StopIngress,
+    /// Migrate from old docker-control project
+    #[command(hide = true)]
+    Migrate,
     /// Update the project with the current template
     Update,
     /// Return metadata for Docker CLI plugin
@@ -239,6 +242,14 @@ async fn async_main() -> anyhow::Result<()> {
 
         let custom_commands = commands::custom::get_custom_commands(&project_dir);
         let mut custom_help = String::new();
+        if project_dir.join("control.cmd").exists() {
+            custom_help.push_str(&format!("\n\n{}\n", ui::yellow("Migration Command:")));
+            custom_help.push_str(&format!(
+                "  {:22} {}\n",
+                ui::cyan("migrate"),
+                "Migrate from old docker-control project"
+            ));
+        }
         if !custom_commands.is_empty() {
             custom_help.push_str(&format!("\n\n{}\n", ui::yellow("Custom Commands:")));
             for cmd in custom_commands {
@@ -492,6 +503,9 @@ async fn async_main() -> anyhow::Result<()> {
         Commands::StopIngress => {
             docker::execute_ingress_compose(&["down"])?;
         }
+        Commands::Migrate => {
+            commands::migrate::execute(&project_dir).await?;
+        }
         Commands::Update => {
             commands::update::execute(&project_dir)?;
         }
@@ -523,7 +537,10 @@ fn execute_external_script(project_dir: &std::path::Path, args: Vec<String>) -> 
         if path.exists() {
             ui::info(format!("Executing custom script: {:?}", path));
             let mut cmd = std::process::Command::new("bash");
-            cmd.arg(&path).args(command_args).current_dir(project_dir);
+            cmd.arg(&path)
+                .args(command_args)
+                .current_dir(project_dir)
+                .env("PROJECT_DIR", project_dir);
 
             // Set environment variables for the script if needed
             // original bash script has access to LIB_DIR, PROJECT_DIR, etc.

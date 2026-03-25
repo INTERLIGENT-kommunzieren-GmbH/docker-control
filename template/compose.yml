@@ -133,6 +133,8 @@ services:
       - gotenberg
       - mail
       - phpmyadmin
+    links:
+      - db:db2
     environment:
       SSH_AUTH_PORT: host.docker.internal:2222
       SSH_AUTH_SOCK: /tmp/ssh-agent.sock
@@ -173,6 +175,7 @@ services:
       - db_pw
       - db_name
     volumes:
+      - "./config/composer.config.json:/var/www/.composer/config.json:cached"
       - "./config/crontab:/tmp/crontab"
       - "./config/htpasswd:/etc/apache2/.htpasswd:ro"
       - "./config/apache-sites:/etc/apache2/sites-enabled:ro"

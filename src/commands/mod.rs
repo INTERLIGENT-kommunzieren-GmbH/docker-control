@@ -4,6 +4,7 @@ pub mod custom;
 pub mod deploy;
 pub mod init;
 pub mod merge;
+pub mod migrate;
 pub mod release;
 pub mod show_running;
 pub mod status;

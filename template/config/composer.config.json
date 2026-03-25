@@ -1,0 +1,22 @@
+{
+  "config": {},
+  "repositories": [
+    {
+      "type": "composer",
+      "url": "https://composer.interligent.net/packages/",
+      "options": {
+        "ssl": {
+          "verify_peer": false
+        }
+      }
+    },
+    {
+      "type": "git",
+      "url": "https://github.com/mostafasy/mezzio-navigation.git"
+    },
+    {
+      "url": "https://github.com/mostafasy/doctrine-dynamic-discriminator-map.git",
+      "type": "git"
+    }
+  ]
+}
