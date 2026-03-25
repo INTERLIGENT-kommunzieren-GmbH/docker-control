@@ -138,6 +138,11 @@ pub async fn execute(project_dir: &Path) -> Result<()> {
     // 7. Add cap.sh control script
     ui::info("Adding cap.sh control script...");
     let cap_sh_content = r#"#!/bin/bash
+if [[ "$1" == "_desc_" ]]; then
+    echo "Old capistrano deployment command"
+    exit 0
+fi
+
 DC="docker compose --project-directory ${PROJECT_DIR:-.}"
 
 if [ "$#" -le 1 ]; then
