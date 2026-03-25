@@ -48,8 +48,6 @@ pub async fn execute(project_dir: &Path) -> Result<()> {
         .arg("-a")
         .arg("--exclude")
         .arg(&backup_name)
-        .arg("--exclude")
-        .arg(".git")
         .arg("./")
         .arg(format!("{}/", backup_name))
         .current_dir(project_dir)
