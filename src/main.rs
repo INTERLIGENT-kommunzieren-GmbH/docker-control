@@ -253,7 +253,7 @@ async fn async_main() -> anyhow::Result<()> {
         let custom_commands = commands::custom::get_custom_commands(&project_dir);
         let mut custom_help = String::new();
         if project_dir.join("control.cmd").exists() {
-            custom_help.push_str(&format!("\n\n{}\n", ui::yellow("Migration Command:")));
+            custom_help.push_str(&format!("\n{}\n", ui::yellow("Migration Command:")));
             custom_help.push_str(&format!(
                 "  {:22} {}\n",
                 ui::cyan("migrate"),
@@ -261,7 +261,7 @@ async fn async_main() -> anyhow::Result<()> {
             ));
         }
         if !custom_commands.is_empty() {
-            custom_help.push_str(&format!("\n\n{}\n", ui::yellow("Custom Commands:")));
+            custom_help.push_str(&format!("\n{}\n", ui::yellow("Custom Commands:")));
             for cmd in custom_commands {
                 custom_help.push_str(&format!(
                     "  {:22} {}\n",
@@ -272,7 +272,7 @@ async fn async_main() -> anyhow::Result<()> {
         }
 
         let help_template = format!(
-            "{{before-help}}{{name}} {{version}}\n{{about-with-newline}}\n{{usage-heading}} {{usage}}\n\n{}\n{{subcommands}}{}\n{}\n{{options}}",
+            "{{before-help}}{{name}} {{version}}\n{{about-with-newline}}\n{{usage-heading}} {{usage}}\n\n{}\n{{subcommands}}\n{}\n{}\n{{options}}",
             ui::yellow("Commands:"),
             custom_help,
             ui::yellow("Options:")
