@@ -1,13 +1,12 @@
 use crate::ui;
 use anyhow::Result;
-use bollard::Docker;
 use bollard::container::ListContainersOptions;
 use std::collections::HashMap;
 
 pub async fn execute() -> Result<()> {
     ui::info("PROJECT DIRECTORY");
 
-    let docker = match Docker::connect_with_local_defaults() {
+    let docker = match crate::docker::connect() {
         Ok(d) => d,
         Err(_) => return Err(anyhow::anyhow!("Unable to connect to Docker")),
     };

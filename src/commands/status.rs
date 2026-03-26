@@ -3,7 +3,6 @@ use crate::git::GitService;
 use crate::ui;
 use crate::utils;
 use anyhow::Result;
-use bollard::Docker;
 use bollard::container::ListContainersOptions;
 use std::collections::HashMap;
 use std::path::Path;
@@ -63,7 +62,7 @@ pub async fn get_summary(project_dir: &Path) -> String {
 
     // 3. Docker Summary
     let docker_summary = async {
-        let docker = match Docker::connect_with_local_defaults() {
+        let docker = match crate::docker::connect() {
             Ok(d) => d,
             Err(_) => return "Docker: error".to_string(),
         };
@@ -173,7 +172,7 @@ fn show_deployment_status(project_dir: &Path) {
 }
 
 async fn show_docker_status(project_dir: &Path) {
-    let docker = match Docker::connect_with_local_defaults() {
+    let docker = match crate::docker::connect() {
         Ok(d) => d,
         Err(_) => {
             ui::warning("  Docker Status: ✗ Unable to connect to Docker");

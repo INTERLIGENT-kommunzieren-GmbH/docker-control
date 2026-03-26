@@ -1,8 +1,29 @@
 use crate::ui;
 use crate::utils::platform;
 use anyhow::{Context, Result, anyhow};
+use bollard::Docker;
 use std::path::{Path, PathBuf};
 use std::process::Command;
+
+pub fn connect() -> Result<Docker> {
+    match Docker::connect_with_local_defaults() {
+        Ok(d) => Ok(d),
+        Err(e) => {
+            // Check for Docker Desktop for Mac per-user socket if default fails
+            if cfg!(target_os = "macos") {
+                if let Some(home_dir) = directories::BaseDirs::new().map(|b| b.home_dir().to_path_buf()) {
+                    let mac_socket = home_dir.join(".docker/run/docker.sock");
+                    if mac_socket.exists() {
+                        let socket_path = format!("unix://{}", mac_socket.to_string_lossy());
+                        return Docker::connect_with_unix(&socket_path, 120, bollard::API_DEFAULT_VERSION)
+                            .map_err(|e| anyhow!("Failed to connect to Docker on macOS: {}", e));
+                    }
+                }
+            }
+            Err(anyhow!("Failed to connect to Docker: {}", e))
+        }
+    }
+}
 
 pub fn execute_compose(project_dir: &Path, args: &[&str]) -> Result<()> {
     let mut cmd = Command::new("docker");

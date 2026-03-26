@@ -1,7 +1,6 @@
 use crate::ui;
 use crate::utils::platform::PlatformInfo;
 use anyhow::{Result, anyhow};
-use bollard::Docker;
 use bollard::container::ListContainersOptions;
 use std::collections::HashMap;
 use std::net::TcpStream as StdTcpStream;
@@ -125,7 +124,7 @@ fn start_forwarding(port: u16, bind_ip: &str, unix_sock: &str) -> Result<()> {
 }
 
 async fn restart_php_containers() -> Result<()> {
-    let docker = Docker::connect_with_local_defaults()
+    let docker = crate::docker::connect()
         .map_err(|e| anyhow!("Failed to connect to Docker: {}", e))?;
 
     let mut filters = HashMap::new();
