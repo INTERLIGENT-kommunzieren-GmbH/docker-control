@@ -50,7 +50,7 @@ services:
       PMA_ABSOLUTE_URI: https://${BASE_DOMAIN}/_phpmyadmin/
       PMA_HOST: db
       UPLOAD_LIMIT: 512M
-      VIRTUAL_HOST: ${BASE_DOMAIN}
+      VIRTUAL_HOST: ${BASE_DOMAIN}, www.${BASE_DOMAIN}
       VIRTUAL_PATH: /_phpmyadmin/
       VIRTUAL_DEST: /
     image: phpmyadmin
