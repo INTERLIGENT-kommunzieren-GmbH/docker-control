@@ -26,9 +26,7 @@ pub async fn execute(project_dir: &Path) -> Result<()> {
         .context("Failed to execute control.cmd stop")?;
 
     if !status.success() {
-        return Err(anyhow!(
-            "control.cmd stop failed. Migration aborted."
-        ));
+        return Err(anyhow!("control.cmd stop failed. Migration aborted."));
     }
 
     // 2. Move project to backup subfolder using rsync with sudo
@@ -223,8 +221,8 @@ fn migrate_capistrano(project_dir: &Path, backup_name: &str) -> Result<()> {
 
             let mut processed_line = line.to_string();
             // Perform replacements as requested
-            processed_line = processed_line
-                .replace("./container/capistrano/", "./volumes/capistrano/");
+            processed_line =
+                processed_line.replace("./container/capistrano/", "./volumes/capistrano/");
             processed_line =
                 processed_line.replace("docker-compose/build/capistrano", "build/capistrano");
 
@@ -288,7 +286,9 @@ fn restore_env(project_dir: &Path, backup_name: &str) -> Result<()> {
     }
 
     if !backup_vars.contains_key("DB_HOST_PORT")
-        && let Some(port) = backup_vars.get("MARIADB_PORT").or(backup_vars.get("MYSQL_PORT"))
+        && let Some(port) = backup_vars
+            .get("MARIADB_PORT")
+            .or(backup_vars.get("MYSQL_PORT"))
     {
         backup_vars.insert("DB_HOST_PORT", port);
     }

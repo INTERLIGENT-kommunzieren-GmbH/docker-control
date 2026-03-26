@@ -1,6 +1,6 @@
-use std::process::Command;
 use crate::ui;
 use anyhow::{Result, anyhow};
+use std::process::Command;
 
 pub struct Dependency {
     pub name: &'static str,

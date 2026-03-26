@@ -301,7 +301,6 @@ async fn async_main() -> anyhow::Result<()> {
         utils::dependencies::check_dependencies()?;
     }
 
-
     if cli.stop_ssh_agent {
         if let Err(e) = docker_control::utils::stop_ssh_agent() {
             ui::critical(format!("Failed to stop SSH agent: {}", e));

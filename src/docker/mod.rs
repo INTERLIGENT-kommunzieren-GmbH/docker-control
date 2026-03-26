@@ -11,12 +11,18 @@ pub fn connect() -> Result<Docker> {
         Err(e) => {
             // Check for Docker Desktop for Mac per-user socket if default fails
             if cfg!(target_os = "macos") {
-                if let Some(home_dir) = directories::BaseDirs::new().map(|b| b.home_dir().to_path_buf()) {
+                if let Some(home_dir) =
+                    directories::BaseDirs::new().map(|b| b.home_dir().to_path_buf())
+                {
                     let mac_socket = home_dir.join(".docker/run/docker.sock");
                     if mac_socket.exists() {
                         let socket_path = format!("unix://{}", mac_socket.to_string_lossy());
-                        return Docker::connect_with_unix(&socket_path, 120, bollard::API_DEFAULT_VERSION)
-                            .map_err(|e| anyhow!("Failed to connect to Docker on macOS: {}", e));
+                        return Docker::connect_with_unix(
+                            &socket_path,
+                            120,
+                            bollard::API_DEFAULT_VERSION,
+                        )
+                        .map_err(|e| anyhow!("Failed to connect to Docker on macOS: {}", e));
                     }
                 }
             }

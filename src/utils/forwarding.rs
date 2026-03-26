@@ -124,8 +124,8 @@ fn start_forwarding(port: u16, bind_ip: &str, unix_sock: &str) -> Result<()> {
 }
 
 async fn restart_php_containers() -> Result<()> {
-    let docker = crate::docker::connect()
-        .map_err(|e| anyhow!("Failed to connect to Docker: {}", e))?;
+    let docker =
+        crate::docker::connect().map_err(|e| anyhow!("Failed to connect to Docker: {}", e))?;
 
     let mut filters = HashMap::new();
     filters.insert(

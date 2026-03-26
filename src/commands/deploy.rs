@@ -576,7 +576,7 @@ fn execute_hook(
     let args_str = args.join(" ");
     let hook_path_str = hook_path.display();
     let cmd = format!(
-        ". {hook_path_str} && if [[ $(type -t {hook_name}_{sanitized_env}) == \"function\" ]]; then {hook_name}_{sanitized_env} \"{args_str}\" ; fi",
+        "exec_ssh() {{ ssh -q -o BatchMode=yes -o StrictHostKeyChecking=no \"$1@$2\" \"${{@:3}}\"; }}; . {hook_path_str} && if [[ $(type -t {hook_name}_{sanitized_env}) == \"function\" ]]; then {hook_name}_{sanitized_env} \"{args_str}\" ; fi",
     );
 
     let status = Command::new("bash").arg("-c").arg(cmd).status()?;
