@@ -21,6 +21,7 @@ pub struct Environment {
     pub branch: Option<String>,
     #[serde(rename = "serviceRoot")]
     pub service_root: Option<String>,
+    pub console_command: Option<String>,
     pub description: Option<String>,
     pub tags: Option<Vec<String>>,
     #[serde(rename = "teamsWebhookUrl")]
@@ -54,13 +55,13 @@ pub struct Metadata {
 impl DeployConfig {
     pub fn load(project_dir: &Path) -> Result<Self> {
         let config_file = find_config_file(project_dir)
-            .ok_or_else(|| anyhow!("No deployment configuration found (.deploy.json)"))?;
+            .ok_or_else(|| anyhow!("No deployment configuration found (.deployment-config.json)"))?;
 
         let content = fs::read_to_string(&config_file)
             .context(format!("Failed to read config file {:?}", config_file))?;
 
         let config: DeployConfig =
-            serde_json::from_str(&content).context("Failed to parse .deploy.json")?;
+            serde_json::from_str(&content).context(format!("Failed to parse {}", config_file.to_str().unwrap_or("deployment config file")))?;
 
         // Basic validation
         if config.version != "1.0" {
@@ -117,13 +118,13 @@ impl DeployConfig {
 
 fn find_config_file(project_dir: &Path) -> Option<PathBuf> {
     // Preferred: htdocs/.docker-control/.deploy.json
-    let preferred = project_dir.join("htdocs/.docker-control/.deploy.json");
+    let preferred = project_dir.join("htdocs/.docker-control/deployment-config.json");
     if preferred.exists() {
         return Some(preferred);
     }
 
     // Fallback: .deploy.json in project root
-    let fallback = project_dir.join(".deploy.json");
+    let fallback = project_dir.join(".deployment-config.json");
     if fallback.exists() {
         return Some(fallback);
     }

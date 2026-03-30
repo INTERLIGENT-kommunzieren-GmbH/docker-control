@@ -104,6 +104,7 @@ pub async fn execute(
 
     // Transfer and execute
     let server_root = env.service_root.as_deref().unwrap_or("/var/www/html");
+    let console_command = env.console_command.as_deref().unwrap_or("bin/console");
 
     if let Err(e) = perform_deployment(DeploymentContext {
         project_dir,
@@ -112,6 +113,7 @@ pub async fn execute(
         archive_path: &archive_path,
         release_dir: &release_dir,
         server_root,
+        console_command: &console_command,
         maintenance_mode: &maintenance_mode,
         yes,
     })
@@ -271,6 +273,7 @@ struct DeploymentContext<'a> {
     archive_path: &'a Path,
     release_dir: &'a str,
     server_root: &'a str,
+    console_command: &'a str,
     maintenance_mode: &'a str,
     yes: bool,
 }
@@ -306,8 +309,8 @@ async fn perform_deployment(ctx: DeploymentContext<'_>) -> Result<()> {
     // 4. Cleanup old releases (keep last 5)
     // ls -d1t $SERVER_ROOT/releases/* | grep -v $(readlink -f $SERVER_ROOT/current) | egrep "^$SERVER_ROOT/releases/[0-9]{14}_.+$" | tail -n +6 | xargs rm -rf
     let cleanup_cmd = format!(
-        "bash -c 'ls -d1t {}/* 2>/dev/null | grep -v $(readlink -f {}/current 2>/dev/null || echo \"none\") | grep -E \"{}/[0-9]{{14}}_.+$\" | tail -n +6 | xargs rm -rf 2>/dev/null || true'",
-        remote_releases, ctx.server_root, remote_releases
+        "bash -c 'ls -d1t {remote_releases}/* 2>/dev/null | grep -v $(readlink -f {}/current 2>/dev/null || echo \"none\") | grep -E \"{remote_releases}/[0-9]{{14}}_.+$\" | tail -n +6 | xargs rm -rf 2>/dev/null || true'",
+        ctx.server_root
     );
     let _ = ssh::exec_ssh(user, domain, &cleanup_cmd);
 
@@ -327,7 +330,7 @@ async fn perform_deployment(ctx: DeploymentContext<'_>) -> Result<()> {
     ui::info(format!("Enabling maintenance mode ({})", maintenance_mode));
 
     let console_current = format!("php {}/current/public/index.php", ctx.server_root);
-    let console_new = format!("php {}/public/index.php", remote_release_path);
+    let console_new = format!("php {}/{}", remote_release_path, ctx.console_command);
 
     // We try to enable maintenance on current if it exists, and on new.
     let _ = ssh::exec_ssh(
@@ -349,7 +352,11 @@ async fn perform_deployment(ctx: DeploymentContext<'_>) -> Result<()> {
         ctx.project_dir,
         ctx.env_name,
         "pre_deploy_hook",
-        vec![user, domain, ctx.server_root, ctx.release_dir, &console_new],
+        user,
+        domain,
+        ctx.server_root,
+        ctx.release_dir,
+        &console_new,
     )?;
 
     // 8. Cache clearing, migrations, etc.
@@ -460,7 +467,11 @@ async fn perform_deployment(ctx: DeploymentContext<'_>) -> Result<()> {
         ctx.project_dir,
         ctx.env_name,
         "post_deploy_hook",
-        vec![user, domain, ctx.server_root, ctx.release_dir, &console_new],
+        user,
+        domain,
+        ctx.server_root,
+        ctx.release_dir,
+        &console_new,
     )?;
 
     ui::info("Basic deployment done. You can now run custom commands on the server.");
@@ -533,7 +544,11 @@ async fn perform_deployment(ctx: DeploymentContext<'_>) -> Result<()> {
         ctx.project_dir,
         ctx.env_name,
         "done_deploy_hook",
-        vec![user, domain, ctx.server_root, ctx.release_dir, &console_new],
+        user,
+        domain,
+        ctx.server_root,
+        ctx.release_dir,
+        &console_new,
     )?;
 
     Ok(())
@@ -548,7 +563,11 @@ fn execute_hook(
     project_dir: &Path,
     env_name: &str,
     hook_name: &str,
-    args: Vec<&str>,
+    user: &str,
+    domain: &str,
+    server_root: &str,
+    release_dir: &str,
+    console_new: &str,
 ) -> Result<()> {
     let sanitized_env = sanitize_name(env_name);
     let hook_path = if project_dir
@@ -573,10 +592,13 @@ fn execute_hook(
 
     ui::info(format!("Executing hook: {}...", hook_name));
 
-    let args_str = args.join(" ");
     let hook_path_str = hook_path.display();
     let cmd = format!(
-        "exec_ssh() {{ ssh -q -o BatchMode=yes -o StrictHostKeyChecking=no \"$1@$2\" \"${{@:3}}\"; }}; . {hook_path_str} && if [[ $(type -t {hook_name}_{sanitized_env}) == \"function\" ]]; then {hook_name}_{sanitized_env} \"{args_str}\" ; fi",
+        "exec() {{ ssh -q -o BatchMode=yes -o StrictHostKeyChecking=no \"{user}@{domain}\" -- \"$@\"; }}; \
+        . {hook_path_str} &&\
+        if [[ $(type -t {hook_name}_{sanitized_env}) == \"function\" ]]; then \
+            {hook_name}_{sanitized_env} \"{console_new}\" \"{release_dir}\" \"{server_root}\";\
+        fi",
     );
 
     let status = Command::new("bash").arg("-c").arg(cmd).status()?;

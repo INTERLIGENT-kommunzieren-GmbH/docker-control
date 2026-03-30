@@ -27,6 +27,10 @@ pub fn execute(project_dir: &Path) -> Result<()> {
         .with_default("/var/www/html")
         .prompt()?;
 
+    let console_command = Text::new("Console command:")
+        .with_default("bin/console")
+        .prompt()?;
+
     let description = Text::new("Description:")
         .with_default(&format!("Deployment environment: {}", env_name))
         .prompt()?;
@@ -63,6 +67,7 @@ pub fn execute(project_dir: &Path) -> Result<()> {
         domain,
         branch: None, // Will be selected during deploy
         service_root: Some(service_root),
+        console_command: Some(console_command),
         description: Some(description),
         tags: None,
         teams_webhook_url,
