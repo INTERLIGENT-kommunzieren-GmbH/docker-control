@@ -1,4 +1,4 @@
-# IK Docker Control
+# IK Docker Control [![Tests](https://github.com/INTERLIGENT-kommunzieren-GmbH/docker-control/actions/workflows/tests.yml/badge.svg)](https://github.com/INTERLIGENT-kommunzieren-GmbH/docker-control/actions/workflows/tests.yml)
 
 A Docker command for controlling the `ik` Docker stack, providing an easy way to manage your Docker containers and perform common operations like building, starting, stopping, and accessing the containers.
 
