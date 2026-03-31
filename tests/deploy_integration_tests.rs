@@ -301,3 +301,108 @@ async fn test_failed_deploy_cops_error_non_interactive() -> Result<()> {
 
     Ok(())
 }
+
+#[tokio::test]
+async fn test_deploy_hooks() -> Result<()> {
+    let repo = TestRepo::new("deploy-hooks")?;
+    repo.setup_mezzio_project()?;
+
+    // Create a release tag
+    TestRepo::git_run(&repo.root.join("htdocs"), &["tag", "v1.0.0"])?;
+    TestRepo::git_run(&repo.root.join("htdocs"), &["push", "origin", "v1.0.0"])?;
+
+    // Setup deploy config
+    repo.write_file(
+        ".deploy.json",
+        r#"{
+        "version": "1.0",
+        "environments": {
+            "prod": {
+                "user": "deploy-user",
+                "domain": "example.com",
+                "serviceRoot": "/var/www/my-app"
+            }
+        }
+    }"#,
+    )?;
+
+    // Create hook script
+    let hooks_dir = repo.root.join("deployments/scripts");
+    fs::create_dir_all(&hooks_dir)?;
+    let hook_log = repo.root.join("hook_execution.log");
+    let hook_content = format!(
+        r#"#!/bin/bash
+pre_deploy_hook_prod() {{
+    echo "PRE: $1 $2 $3" >> "{}"
+    exec_ssh "custom-pre-hook-command"
+}}
+post_deploy_hook_prod() {{
+    echo "POST: $1 $2 $3" >> "{}"
+}}
+done_deploy_hook_prod() {{
+    echo "DONE: $1 $2 $3" >> "{}"
+}}
+"#,
+        hook_log.to_string_lossy(),
+        hook_log.to_string_lossy(),
+        hook_log.to_string_lossy()
+    );
+    fs::write(hooks_dir.join("prod.sh"), hook_content)?;
+
+    // Create fake bin directory
+    let bin_dir = repo.root.join("bin");
+    fs::create_dir_all(&bin_dir)?;
+    let ssh_log = repo.root.join("ssh_commands.log");
+    create_fake_bin(&bin_dir, "ssh", &ssh_log)?;
+    create_fake_bin(&bin_dir, "scp", &ssh_log)?;
+    create_fake_bin(&bin_dir, "7z", &ssh_log)?;
+    create_fake_bin(&bin_dir, "docker", &ssh_log)?;
+
+    let bin_path = PathBuf::from(env!("CARGO_BIN_EXE_docker-control"));
+
+    let output = Command::new(&bin_path)
+        .arg("deploy")
+        .arg("prod")
+        .arg("--release")
+        .arg("v1.0.0")
+        .arg("--yes")
+        .current_dir(&repo.root)
+        .env(
+            "PATH",
+            format!(
+                "{}:{}",
+                bin_dir.to_string_lossy(),
+                std::env::var("PATH").unwrap_or_default()
+            ),
+        )
+        .env("DOCKER_CONTROL_SKIP_SSH_AGENT", "1")
+        .env("DOCKER_CONTROL_SKIP_DEPENDENCY_CHECK", "1")
+        .output()?;
+
+    assert!(output.status.success(), "Deploy command failed: {}", String::from_utf8_lossy(&output.stderr));
+
+    // Verify hook log
+    let hook_log_content = fs::read_to_string(&hook_log)?;
+    println!("Hook log content:\n{}", hook_log_content);
+
+    // Order should be: release_dir console_new server_root
+    // release_dir matches timestamp_v1.0.0
+    assert!(hook_log_content.contains("PRE: "));
+    // It should match something like 20240326153000_v1.0.0 php /var/www/my-app/bin/console /var/www/my-app
+    // Actually the console command in deploy.rs is:
+    // let console_new = format!("php {}/{}", remote_release_path, ctx.console_command);
+    // where remote_release_path = /var/www/my-app/releases/timestamp_v1.0.0
+    // so it should contain /var/www/my-app/releases/ and /bin/console
+    assert!(hook_log_content.contains("_v1.0.0 php /var/www/my-app/releases/"));
+    assert!(hook_log_content.contains("/bin/console /var/www/my-app"));
+    
+    assert!(hook_log_content.contains("POST: "));
+    assert!(hook_log_content.contains("DONE: "));
+
+    // Verify exec_ssh was called from hook
+    let ssh_log_content = fs::read_to_string(&ssh_log)?;
+    assert!(ssh_log_content.contains("ssh -q -A -o BatchMode=yes -o StrictHostKeyChecking=accept-new deploy-user@example.com -- custom-pre-hook-command"));
+
+    Ok(())
+}
+

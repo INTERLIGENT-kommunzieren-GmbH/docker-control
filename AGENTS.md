@@ -21,7 +21,8 @@ The project uses standard Cargo commands for development:
 - **Build**: `cargo build`
 - **Release Build**: `cargo build --release`
 - **Run**: `cargo run -- [args]` (e.g., `cargo run -- init`)
-- **Single Test**: `cargo test test_name`
+- **Test**: `cargo nextest run`
+- **Single Test**: `cargo nextest run <test_substring>`
 - **Lint**: `cargo clippy`
 - **Format**: `cargo fmt`
 - **Fix Lints**: `cargo fix --allow-dirty`
@@ -33,7 +34,7 @@ The project uses standard Cargo commands for development:
 - **Error Handling**: Uses `anyhow` for flexible error propagation.
 
 ## Testing Guidelines
-- **Framework**: Standard Rust `cargo test`.
+- **Framework**: `cargo-nextest` (Standard Rust tests executed via `cargo nextest run`).
 - **Utilities**: Uses `tempfile` for file system isolation during tests.
 - **Test Locations**: Includes both unit tests within modules and integration tests in `tests/`.
 

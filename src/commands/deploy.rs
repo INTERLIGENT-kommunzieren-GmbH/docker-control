@@ -594,10 +594,10 @@ fn execute_hook(
 
     let hook_path_str = hook_path.display();
     let cmd = format!(
-        "exec() {{ ssh -q -o BatchMode=yes -o StrictHostKeyChecking=no \"{user}@{domain}\" -- \"$@\"; }}; \
+        "exec_ssh() {{ ssh -q -A -o BatchMode=yes -o StrictHostKeyChecking=accept-new \"{user}@{domain}\" -- \"$@\"; }}; \
         . {hook_path_str} &&\
         if [[ $(type -t {hook_name}_{sanitized_env}) == \"function\" ]]; then \
-            {hook_name}_{sanitized_env} \"{console_new}\" \"{release_dir}\" \"{server_root}\";\
+            {hook_name}_{sanitized_env} \"{release_dir}\" \"{console_new}\" \"{server_root}\";\
         fi",
     );
 

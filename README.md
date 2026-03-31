@@ -25,7 +25,7 @@ cargo build --release
 To run the unit tests:
 
 ```bash
-cargo test
+cargo nextest run
 ```
 
 ### Installation
