@@ -1,5 +1,5 @@
 use docker_control::git::{GitService, compare_versions, is_release_branch_name};
-use git2::{BranchType, Repository};
+use git2::{BranchType, Repository, Signature};
 use std::fs;
 use std::path::Path;
 
@@ -12,7 +12,7 @@ fn setup_repo(path: &Path) -> Repository {
 
     // Create initial commit
     {
-        let signature = repo.signature().unwrap();
+        let signature = Signature::now("Test User", "test@example.com").unwrap();
         let tree_id = repo.index().unwrap().write_tree().unwrap();
         let tree = repo.find_tree(tree_id).unwrap();
         repo.commit(
@@ -105,7 +105,7 @@ fn test_list_tags_sorting() {
     let git = GitService::from_repo(repo);
 
     let head = git.repo().head().unwrap().peel_to_commit().unwrap();
-    let sig = git.repo().signature().unwrap();
+    let sig = Signature::now("Test User", "test@example.com").unwrap();
     git.repo()
         .tag("1.0.2", head.as_object(), &sig, "Tag 1.0.2", false)
         .unwrap();
@@ -137,7 +137,7 @@ fn test_get_all_commits_from() {
     // Add another commit
     {
         let mut index = git.repo().index().unwrap();
-        let sig = git.repo().signature().unwrap();
+        let sig = Signature::now("Test User", "test@example.com").unwrap();
         let tree_id = index.write_tree().unwrap();
         let tree = git.repo().find_tree(tree_id).unwrap();
         let parent = git.repo().head().unwrap().peel_to_commit().unwrap();
