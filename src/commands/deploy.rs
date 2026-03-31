@@ -318,7 +318,42 @@ async fn perform_deployment(ctx: DeploymentContext<'_>) -> Result<()> {
     ui::info("Reloading FPM...");
     let _ = ssh::exec_ssh(user, domain, "sudo php-fpm-reload.sh");
 
-    // 6. Maintenance mode selection and activation
+    // 6. Shared paths
+    ui::info("Handling shared paths...");
+    if let Some(dirs) = &ctx.env.shared_directories {
+        for dir in dirs {
+            let shared_path = format!("{}/shared/{}", ctx.server_root, dir);
+            let target_path = format!("{}/{}", remote_release_path, dir);
+            ssh::exec_ssh(user, domain, &format!("mkdir -p {}", shared_path))?;
+            ssh::exec_ssh(
+                user,
+                domain,
+                &format!(
+                    "rm -rf {} && ln -sf {} {}",
+                    target_path, shared_path, target_path
+                ),
+            )?;
+        }
+    }
+    if let Some(files) = &ctx.env.shared_files {
+        for file in files {
+            let shared_path = format!("{}/shared/{}", ctx.server_root, file);
+            let target_path = format!("{}/{}", remote_release_path, file);
+            let shared_dir = Path::new(&shared_path).parent().unwrap().to_string_lossy();
+            ssh::exec_ssh(user, domain, &format!("mkdir -p {}", shared_dir))?;
+            ssh::exec_ssh(user, domain, &format!("touch {}", shared_path))?;
+            ssh::exec_ssh(
+                user,
+                domain,
+                &format!(
+                    "rm -f {} && ln -sf {} {}",
+                    target_path, shared_path, target_path
+                ),
+            )?;
+        }
+    }
+
+    // 7. Maintenance mode selection and activation
     let maintenance_mode = if ctx.yes {
         ctx.maintenance_mode.to_string()
     } else {
@@ -329,8 +364,27 @@ async fn perform_deployment(ctx: DeploymentContext<'_>) -> Result<()> {
     };
     ui::info(format!("Enabling maintenance mode ({})", maintenance_mode));
 
-    let console_current = format!("php {}/current/public/index.php", ctx.server_root);
-    let console_new = format!("php {}/{}", remote_release_path, ctx.console_command);
+    let (php_bin, php_cmd) = if ctx.console_command.starts_with("php ") {
+        (
+            "php",
+            ctx.console_command["php ".len()..].trim_start_matches('/'),
+        )
+    } else {
+        ("php", ctx.console_command.trim_start_matches('/'))
+    };
+
+    let console_current = format!(
+        "{} {}/current/{}",
+        php_bin,
+        ctx.server_root.trim_end_matches('/'),
+        php_cmd
+    );
+    let console_new = format!(
+        "{} {}/{}",
+        php_bin,
+        remote_release_path.trim_end_matches('/'),
+        php_cmd
+    );
 
     // We try to enable maintenance on current if it exists, and on new.
     let _ = ssh::exec_ssh(
@@ -481,15 +535,7 @@ async fn perform_deployment(ctx: DeploymentContext<'_>) -> Result<()> {
         std::io::stdin().read_line(&mut input)?;
     }
 
-    // 11. Maintenance mode OFF (on new release)
-    ui::info("Disabling maintenance mode...");
-    ssh::exec_ssh(
-        user,
-        domain,
-        &format!("{} shared:maintenance off", console_new),
-    )?;
-
-    // 12. Update symlink
+    // 11. Update symlink
     ui::info("Updating current symlink...");
     ssh::exec_ssh(
         user,
@@ -500,40 +546,13 @@ async fn perform_deployment(ctx: DeploymentContext<'_>) -> Result<()> {
         ),
     )?;
 
-    // 13. Shared paths
-    ui::info("Handling shared paths...");
-    if let Some(dirs) = &ctx.env.shared_directories {
-        for dir in dirs {
-            let shared_path = format!("{}/shared/{}", ctx.server_root, dir);
-            let target_path = format!("{}/current/{}", ctx.server_root, dir);
-            ssh::exec_ssh(user, domain, &format!("mkdir -p {}", shared_path))?;
-            ssh::exec_ssh(
-                user,
-                domain,
-                &format!(
-                    "rm -rf {} && ln -sf {} {}",
-                    target_path, shared_path, target_path
-                ),
-            )?;
-        }
-    }
-    if let Some(files) = &ctx.env.shared_files {
-        for file in files {
-            let shared_path = format!("{}/shared/{}", ctx.server_root, file);
-            let target_path = format!("{}/current/{}", ctx.server_root, file);
-            let shared_dir = Path::new(&shared_path).parent().unwrap().to_string_lossy();
-            ssh::exec_ssh(user, domain, &format!("mkdir -p {}", shared_dir))?;
-            ssh::exec_ssh(user, domain, &format!("touch {}", shared_path))?;
-            ssh::exec_ssh(
-                user,
-                domain,
-                &format!(
-                    "rm -f {} && ln -sf {} {}",
-                    target_path, shared_path, target_path
-                ),
-            )?;
-        }
-    }
+    // 12. Maintenance mode OFF (on new release)
+    ui::info("Disabling maintenance mode...");
+    ssh::exec_ssh(
+        user,
+        domain,
+        &format!("{} shared:maintenance off", console_new),
+    )?;
 
     // 14. Final bytecode cache clear
     ui::info("Final bytecode cache clear...");

@@ -379,7 +379,11 @@ done_deploy_hook_prod() {{
         .env("DOCKER_CONTROL_SKIP_DEPENDENCY_CHECK", "1")
         .output()?;
 
-    assert!(output.status.success(), "Deploy command failed: {}", String::from_utf8_lossy(&output.stderr));
+    assert!(
+        output.status.success(),
+        "Deploy command failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
 
     // Verify hook log
     let hook_log_content = fs::read_to_string(&hook_log)?;
@@ -395,7 +399,7 @@ done_deploy_hook_prod() {{
     // so it should contain /var/www/my-app/releases/ and /bin/console
     assert!(hook_log_content.contains("_v1.0.0 php /var/www/my-app/releases/"));
     assert!(hook_log_content.contains("/bin/console /var/www/my-app"));
-    
+
     assert!(hook_log_content.contains("POST: "));
     assert!(hook_log_content.contains("DONE: "));
 
@@ -406,3 +410,242 @@ done_deploy_hook_prod() {{
     Ok(())
 }
 
+#[tokio::test]
+async fn test_deploy_bugfixes() -> Result<()> {
+    let repo = TestRepo::new("deploy-bugfixes")?;
+    repo.setup_mezzio_project()?;
+
+    // Create a release tag
+    TestRepo::git_run(&repo.root.join("htdocs"), &["tag", "v1.0.0"])?;
+    TestRepo::git_run(&repo.root.join("htdocs"), &["push", "origin", "v1.0.0"])?;
+
+    // Setup deploy config with custom console command and shared paths
+    repo.write_file(
+        ".deploy.json",
+        r#"{
+        "version": "1.0",
+        "environments": {
+            "prod": {
+                "user": "deploy-user",
+                "domain": "example.com",
+                "serviceRoot": "/var/www/my-app",
+                "console_command": "php bin/console",
+                "sharedDirectories": ["uploads"],
+                "sharedFiles": [".env.local"]
+            }
+        }
+    }"#,
+    )?;
+
+    // Create fake bin directory
+    let bin_dir = repo.root.join("bin");
+    fs::create_dir_all(&bin_dir)?;
+    let log_file = repo.root.join("ssh_commands.log");
+    create_fake_bin(&bin_dir, "ssh", &log_file)?;
+    create_fake_bin(&bin_dir, "scp", &log_file)?;
+    create_fake_bin(&bin_dir, "7z", &log_file)?;
+    create_fake_bin(&bin_dir, "docker", &log_file)?;
+
+    let bin_path = PathBuf::from(env!("CARGO_BIN_EXE_docker-control"));
+
+    let output = Command::new(&bin_path)
+        .arg("deploy")
+        .arg("prod")
+        .arg("--release")
+        .arg("v1.0.0")
+        .arg("--yes")
+        .current_dir(&repo.root)
+        .env(
+            "PATH",
+            format!(
+                "{}:{}",
+                bin_dir.to_string_lossy(),
+                std::env::var("PATH").unwrap_or_default()
+            ),
+        )
+        .env("DOCKER_CONTROL_SKIP_SSH_AGENT", "1")
+        .env("DOCKER_CONTROL_SKIP_DEPENDENCY_CHECK", "1")
+        .output()?;
+
+    assert!(
+        output.status.success(),
+        "Deploy command failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let log_content = fs::read_to_string(&log_file)?;
+    println!("SSH log content:\n{}", log_content);
+
+    // 1. Check for double php prefix
+    // It should NOT contain "php php bin/console"
+    assert!(
+        !log_content.contains("php php bin/console"),
+        "Double php prefix detected"
+    );
+
+    // 2. Check console_current command
+    // It should NOT contain "public/index.php" if console_command is "php bin/console"
+    assert!(
+        !log_content.contains("public/index.php"),
+        "Incorrect console_current command"
+    );
+    assert!(
+        log_content.contains("bin/console shared:maintenance"),
+        "Correct console command not found"
+    );
+
+    // 3. Check order of shared paths and symlink update
+    let lines: Vec<&str> = log_content.lines().collect();
+    let shared_paths_idx = lines
+        .iter()
+        .position(|l| l.contains("mkdir -p /var/www/my-app/shared/uploads"))
+        .expect("Shared paths command not found");
+    let symlink_update_idx = lines
+        .iter()
+        .position(|l| l.contains("rm -f /var/www/my-app/current && ln -s releases/"))
+        .expect("Symlink update command not found");
+
+    assert!(
+        shared_paths_idx < symlink_update_idx,
+        "Shared paths should be handled BEFORE symlink update"
+    );
+
+    // 4. Check that shared paths use remote_release_path, not 'current'
+    // Before fix, it uses 'current'
+    assert!(
+        !lines[shared_paths_idx..]
+            .iter()
+            .any(|l| l.contains("/var/www/my-app/current/uploads")),
+        "Shared paths should NOT use 'current' before symlink update"
+    );
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn test_deploy_order_full_verification() -> Result<()> {
+    let repo = TestRepo::new("deploy-order")?;
+    repo.setup_mezzio_project()?;
+
+    // Create a release tag
+    TestRepo::git_run(&repo.root.join("htdocs"), &["tag", "v1.0.0"])?;
+    TestRepo::git_run(&repo.root.join("htdocs"), &["push", "origin", "v1.0.0"])?;
+
+    // Setup deploy config with shared paths
+    repo.write_file(
+        ".deploy.json",
+        r#"{
+        "version": "1.0",
+        "environments": {
+            "prod": {
+                "user": "deploy-user",
+                "domain": "example.com",
+                "serviceRoot": "/var/www/my-app",
+                "sharedDirectories": ["uploads"]
+            }
+        }
+    }"#,
+    )?;
+
+    // Create hooks
+    let hooks_dir = repo.root.join("deployments/scripts");
+    fs::create_dir_all(&hooks_dir)?;
+    let hook_content = r#"#!/bin/bash
+pre_deploy_hook_prod() {
+    exec_ssh "custom-pre-hook-command"
+}
+post_deploy_hook_prod() {
+    exec_ssh "custom-post-hook-command"
+}
+"#;
+    fs::write(hooks_dir.join("prod.sh"), hook_content)?;
+
+    // Create fake bin directory
+    let bin_dir = repo.root.join("bin");
+    fs::create_dir_all(&bin_dir)?;
+    let log_file = repo.root.join("ssh_commands.log");
+    create_fake_bin(&bin_dir, "ssh", &log_file)?;
+    create_fake_bin(&bin_dir, "scp", &log_file)?;
+    create_fake_bin(&bin_dir, "7z", &log_file)?;
+    create_fake_bin(&bin_dir, "docker", &log_file)?;
+
+    let bin_path = PathBuf::from(env!("CARGO_BIN_EXE_docker-control"));
+
+    let output = Command::new(&bin_path)
+        .arg("deploy")
+        .arg("prod")
+        .arg("--release")
+        .arg("v1.0.0")
+        .arg("--yes")
+        .current_dir(&repo.root)
+        .env(
+            "PATH",
+            format!(
+                "{}:{}",
+                bin_dir.to_string_lossy(),
+                std::env::var("PATH").unwrap_or_default()
+            ),
+        )
+        .env("DOCKER_CONTROL_SKIP_SSH_AGENT", "1")
+        .env("DOCKER_CONTROL_SKIP_DEPENDENCY_CHECK", "1")
+        .output()?;
+
+    assert!(output.status.success());
+
+    let log_content = fs::read_to_string(&log_file)?;
+    let lines: Vec<&str> = log_content.lines().collect();
+
+    let shared_paths_idx = lines
+        .iter()
+        .position(|l| l.contains("mkdir -p /var/www/my-app/shared/uploads"))
+        .expect("Shared paths command not found");
+
+    let maintenance_idx = lines
+        .iter()
+        .position(|l| l.contains("shared:maintenance hard"))
+        .expect("Maintenance command not found");
+
+    let pre_hook_idx = lines
+        .iter()
+        .position(|l| l.contains("custom-pre-hook-command"))
+        .expect("Pre-deploy hook command not found");
+
+    let migrations_idx = lines
+        .iter()
+        .position(|l| l.contains("migrations:migrate"))
+        .expect("Migrations command not found");
+
+    let post_hook_idx = lines
+        .iter()
+        .position(|l| l.contains("custom-post-hook-command"))
+        .expect("Post-deploy hook command not found");
+
+    let symlink_update_idx = lines
+        .iter()
+        .position(|l| l.contains("rm -f /var/www/my-app/current && ln -s releases/"))
+        .expect("Symlink update command not found");
+
+    // Verify order: Shared paths -> Maintenance -> Pre-hook -> Migrations -> Post-hook -> Symlink
+    assert!(
+        shared_paths_idx < maintenance_idx,
+        "Shared paths should be before maintenance"
+    );
+    assert!(
+        maintenance_idx < pre_hook_idx,
+        "Maintenance should be before pre-hook"
+    );
+    assert!(
+        pre_hook_idx < migrations_idx,
+        "Pre-hook should be before migrations"
+    );
+    assert!(
+        migrations_idx < post_hook_idx,
+        "Migrations should be before post-hook"
+    );
+    assert!(
+        post_hook_idx < symlink_update_idx,
+        "Post-hook should be before symlink update"
+    );
+
+    Ok(())
+}

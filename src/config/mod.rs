@@ -60,8 +60,10 @@ impl DeployConfig {
         let content = fs::read_to_string(&config_file)
             .context(format!("Failed to read config file {:?}", config_file))?;
 
-        let config: DeployConfig =
-            serde_json::from_str(&content).context(format!("Failed to parse {}", config_file.to_str().unwrap_or("deployment config file")))?;
+        let config: DeployConfig = serde_json::from_str(&content).context(format!(
+            "Failed to parse {}",
+            config_file.to_str().unwrap_or("deployment config file")
+        ))?;
 
         // Basic validation
         if config.version != "1.0" {
