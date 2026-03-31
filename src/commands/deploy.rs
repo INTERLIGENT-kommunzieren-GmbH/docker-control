@@ -113,7 +113,7 @@ pub async fn execute(
         archive_path: &archive_path,
         release_dir: &release_dir,
         server_root,
-        console_command: &console_command,
+        console_command,
         maintenance_mode: &maintenance_mode,
         yes,
     })
@@ -402,16 +402,17 @@ async fn perform_deployment(ctx: DeploymentContext<'_>) -> Result<()> {
     );
 
     // 7. Hooks: pre_deploy_hook
-    execute_hook(
-        ctx.project_dir,
-        ctx.env_name,
-        "pre_deploy_hook",
+    let hook_ctx = HookContext {
+        project_dir: ctx.project_dir,
+        env_name: ctx.env_name,
         user,
         domain,
-        ctx.server_root,
-        ctx.release_dir,
-        &console_new,
-    )?;
+        server_root: ctx.server_root,
+        release_dir: ctx.release_dir,
+        console_new: &console_new,
+    };
+
+    execute_hook(&hook_ctx, "pre_deploy_hook")?;
 
     // 8. Cache clearing, migrations, etc.
     ui::info("Executing deployment tasks...");
@@ -517,16 +518,7 @@ async fn perform_deployment(ctx: DeploymentContext<'_>) -> Result<()> {
     }
 
     // 10. Hooks: post_deploy_hook
-    execute_hook(
-        ctx.project_dir,
-        ctx.env_name,
-        "post_deploy_hook",
-        user,
-        domain,
-        ctx.server_root,
-        ctx.release_dir,
-        &console_new,
-    )?;
+    execute_hook(&hook_ctx, "post_deploy_hook")?;
 
     ui::info("Basic deployment done. You can now run custom commands on the server.");
     if !ctx.yes {
@@ -559,16 +551,7 @@ async fn perform_deployment(ctx: DeploymentContext<'_>) -> Result<()> {
     ssh::exec_ssh(user, domain, &format!("{} shared:clear-opcc", console_new))?;
 
     // 15. Hooks: done_deploy_hook
-    execute_hook(
-        ctx.project_dir,
-        ctx.env_name,
-        "done_deploy_hook",
-        user,
-        domain,
-        ctx.server_root,
-        ctx.release_dir,
-        &console_new,
-    )?;
+    execute_hook(&hook_ctx, "done_deploy_hook")?;
 
     Ok(())
 }
@@ -578,33 +561,36 @@ fn sanitize_name(name: &str) -> String {
         .replace(['/', '\\', '.', ':', ',', '-'], "_")
 }
 
-fn execute_hook(
-    project_dir: &Path,
-    env_name: &str,
-    hook_name: &str,
-    user: &str,
-    domain: &str,
-    server_root: &str,
-    release_dir: &str,
-    console_new: &str,
-) -> Result<()> {
-    let sanitized_env = sanitize_name(env_name);
-    let hook_path = if project_dir
+struct HookContext<'a> {
+    project_dir: &'a Path,
+    env_name: &'a str,
+    user: &'a str,
+    domain: &'a str,
+    server_root: &'a str,
+    release_dir: &'a str,
+    console_new: &'a str,
+}
+
+fn execute_hook(ctx: &HookContext, hook_name: &str) -> Result<()> {
+    let sanitized_env = sanitize_name(ctx.env_name);
+    let hook_path = if ctx
+        .project_dir
         .join("htdocs/.docker-control/deployment-scripts")
-        .join(format!("{}.sh", env_name))
+        .join(format!("{}.sh", ctx.env_name))
         .exists()
     {
-        project_dir
+        ctx.project_dir
             .join("htdocs/.docker-control/deployment-scripts")
-            .join(format!("{}.sh", env_name))
-    } else if project_dir
+            .join(format!("{}.sh", ctx.env_name))
+    } else if ctx
+        .project_dir
         .join("deployments/scripts")
-        .join(format!("{}.sh", env_name))
+        .join(format!("{}.sh", ctx.env_name))
         .exists()
     {
-        project_dir
+        ctx.project_dir
             .join("deployments/scripts")
-            .join(format!("{}.sh", env_name))
+            .join(format!("{}.sh", ctx.env_name))
     } else {
         return Ok(());
     };
@@ -612,6 +598,12 @@ fn execute_hook(
     ui::info(format!("Executing hook: {}...", hook_name));
 
     let hook_path_str = hook_path.display();
+    let user = ctx.user;
+    let domain = ctx.domain;
+    let release_dir = ctx.release_dir;
+    let console_new = ctx.console_new;
+    let server_root = ctx.server_root;
+
     let cmd = format!(
         "exec_ssh() {{ ssh -q -A -o BatchMode=yes -o StrictHostKeyChecking=accept-new \"{user}@{domain}\" -- \"$@\"; }}; \
         . {hook_path_str} &&\
