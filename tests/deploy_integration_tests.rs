@@ -329,25 +329,18 @@ async fn test_deploy_hooks() -> Result<()> {
     // Create hook script
     let hooks_dir = repo.root.join("deployments/scripts");
     fs::create_dir_all(&hooks_dir)?;
-    let hook_log = repo.root.join("hook_execution.log");
-    let hook_content = format!(
-        r#"#!/bin/bash
-pre_deploy_hook_prod() {{
-    echo "PRE: $1 $2 $3" >> "{}"
-    exec_ssh "custom-pre-hook-command"
-}}
-post_deploy_hook_prod() {{
-    echo "POST: $1 $2 $3" >> "{}"
-}}
-done_deploy_hook_prod() {{
-    echo "DONE: $1 $2 $3" >> "{}"
-}}
-"#,
-        hook_log.to_string_lossy(),
-        hook_log.to_string_lossy(),
-        hook_log.to_string_lossy()
-    );
-    fs::write(hooks_dir.join("prod.sh"), hook_content)?;
+    let hook_content = r#"
+fn pre_deploy(release_dir, console_new, server_root) {
+    exec_ssh("custom-pre-hook-command " + release_dir + " " + console_new + " " + server_root);
+}
+fn post_deploy(release_dir, console_new, server_root) {
+    exec_ssh("custom-post-hook-command " + release_dir + " " + console_new + " " + server_root);
+}
+fn done_deploy(release_dir, console_new, server_root) {
+    exec_ssh("custom-done-hook-command " + release_dir + " " + console_new + " " + server_root);
+}
+"#;
+    fs::write(hooks_dir.join("prod.rhai"), hook_content)?;
 
     // Create fake bin directory
     let bin_dir = repo.root.join("bin");
@@ -385,27 +378,19 @@ done_deploy_hook_prod() {{
         String::from_utf8_lossy(&output.stderr)
     );
 
-    // Verify hook log
-    let hook_log_content = fs::read_to_string(&hook_log)?;
-    println!("Hook log content:\n{}", hook_log_content);
+    // Verify SSH commands were called from hook
+    let ssh_log_content = fs::read_to_string(&ssh_log)?;
+    println!("SSH log content:\n{}", ssh_log_content);
 
     // Order should be: release_dir console_new server_root
     // release_dir matches timestamp_v1.0.0
-    assert!(hook_log_content.contains("PRE: "));
-    // It should match something like 20240326153000_v1.0.0 php /var/www/my-app/bin/console /var/www/my-app
-    // Actually the console command in deploy.rs is:
-    // let console_new = format!("php {}/{}", remote_release_path, ctx.console_command);
-    // where remote_release_path = /var/www/my-app/releases/timestamp_v1.0.0
-    // so it should contain /var/www/my-app/releases/ and /bin/console
-    assert!(hook_log_content.contains("_v1.0.0 php /var/www/my-app/releases/"));
-    assert!(hook_log_content.contains("/bin/console /var/www/my-app"));
+    assert!(ssh_log_content.contains("custom-pre-hook-command "));
+    assert!(ssh_log_content.contains("custom-post-hook-command "));
+    assert!(ssh_log_content.contains("custom-done-hook-command "));
 
-    assert!(hook_log_content.contains("POST: "));
-    assert!(hook_log_content.contains("DONE: "));
-
-    // Verify exec_ssh was called from hook
-    let ssh_log_content = fs::read_to_string(&ssh_log)?;
-    assert!(ssh_log_content.contains("ssh -q -A -o BatchMode=yes -o StrictHostKeyChecking=accept-new deploy-user@example.com -- custom-pre-hook-command"));
+    // It should match something like 20240326153000_v1.0.0 php /var/www/my-app/releases/20240326153000_v1.0.0/bin/console /var/www/my-app
+    assert!(ssh_log_content.contains("_v1.0.0 php /var/www/my-app/releases/"));
+    assert!(ssh_log_content.contains("/var/www/my-app"));
 
     Ok(())
 }
@@ -550,15 +535,15 @@ async fn test_deploy_order_full_verification() -> Result<()> {
     // Create hooks
     let hooks_dir = repo.root.join("deployments/scripts");
     fs::create_dir_all(&hooks_dir)?;
-    let hook_content = r#"#!/bin/bash
-pre_deploy_hook_prod() {
-    exec_ssh "custom-pre-hook-command"
+    let hook_content = r#"
+fn pre_deploy(release_dir, console_new, server_root) {
+    exec_ssh("custom-pre-hook-command");
 }
-post_deploy_hook_prod() {
-    exec_ssh "custom-post-hook-command"
+fn post_deploy(release_dir, console_new, server_root) {
+    exec_ssh("custom-post-hook-command");
 }
 "#;
-    fs::write(hooks_dir.join("prod.sh"), hook_content)?;
+    fs::write(hooks_dir.join("prod.rhai"), hook_content)?;
 
     // Create fake bin directory
     let bin_dir = repo.root.join("bin");

@@ -4,6 +4,7 @@ use crate::ssh;
 use crate::ui;
 use anyhow::{Context, Result, anyhow};
 use inquire::{Confirm, Select};
+use rhai::{AST, Engine, Scope};
 use std::fs;
 use std::path::Path;
 use std::process::Command;
@@ -401,20 +402,22 @@ async fn perform_deployment(ctx: DeploymentContext<'_>) -> Result<()> {
         &format!("{} shared:maintenance {}", console_new, maintenance_mode),
     );
 
-    // 7. Hooks: pre_deploy_hook
+    // 7. Rhai setup
+    let rhai_engine = setup_rhai_engine(user.to_string(), domain.to_string());
+    let rhai_ast = find_hook_file(ctx.project_dir, ctx.env_name)
+        .map(|path| compile_hook(&rhai_engine, &path))
+        .transpose()?;
+
     let hook_ctx = HookContext {
-        project_dir: ctx.project_dir,
-        env_name: ctx.env_name,
-        user,
-        domain,
         server_root: ctx.server_root,
         release_dir: ctx.release_dir,
         console_new: &console_new,
     };
 
-    execute_hook(&hook_ctx, "pre_deploy_hook")?;
+    // 8. Hooks: pre_deploy
+    execute_hook(&rhai_engine, &rhai_ast, &hook_ctx, "pre_deploy")?;
 
-    // 8. Cache clearing, migrations, etc.
+    // 9. Cache clearing, migrations, etc.
     ui::info("Executing deployment tasks...");
     ssh::exec_ssh(user, domain, &format!("{} shared:clear-opcc", console_new))?;
     ssh::exec_ssh(
@@ -517,8 +520,8 @@ async fn perform_deployment(ctx: DeploymentContext<'_>) -> Result<()> {
         }
     }
 
-    // 10. Hooks: post_deploy_hook
-    execute_hook(&hook_ctx, "post_deploy_hook")?;
+    // 10. Hooks: post_deploy
+    execute_hook(&rhai_engine, &rhai_ast, &hook_ctx, "post_deploy")?;
 
     ui::info("Basic deployment done. You can now run custom commands on the server.");
     if !ctx.yes {
@@ -550,72 +553,105 @@ async fn perform_deployment(ctx: DeploymentContext<'_>) -> Result<()> {
     ui::info("Final bytecode cache clear...");
     ssh::exec_ssh(user, domain, &format!("{} shared:clear-opcc", console_new))?;
 
-    // 15. Hooks: done_deploy_hook
-    execute_hook(&hook_ctx, "done_deploy_hook")?;
+    // 15. Hooks: done_deploy
+    execute_hook(&rhai_engine, &rhai_ast, &hook_ctx, "done_deploy")?;
 
     Ok(())
 }
 
-fn sanitize_name(name: &str) -> String {
-    name.to_lowercase()
-        .replace(['/', '\\', '.', ':', ',', '-'], "_")
+#[cfg(test)]
+std::thread_local! {
+    pub(crate) static MOCK_SSH_COMMANDS: std::cell::RefCell<Vec<String>> = std::cell::RefCell::new(Vec::new());
+}
+
+fn setup_rhai_engine(_user: String, _domain: String) -> Engine {
+    let mut engine = Engine::new();
+
+    #[cfg(not(test))]
+    let user_clone = _user.clone();
+    #[cfg(not(test))]
+    let domain_clone = _domain.clone();
+    engine.register_fn(
+        "exec_ssh",
+        move |command: &str| -> Result<(), Box<rhai::EvalAltResult>> {
+            #[cfg(not(test))]
+            if let Err(e) = ssh::exec_ssh(&user_clone, &domain_clone, command) {
+                return Err(Box::new(rhai::EvalAltResult::ErrorRuntime(
+                    format!("SSH command failed: {}", e).into(),
+                    rhai::Position::NONE,
+                )));
+            }
+
+            #[cfg(test)]
+            MOCK_SSH_COMMANDS.with(|c| c.borrow_mut().push(command.to_string()));
+
+            Ok(())
+        },
+    );
+
+    engine
 }
 
 struct HookContext<'a> {
-    project_dir: &'a Path,
-    env_name: &'a str,
-    user: &'a str,
-    domain: &'a str,
     server_root: &'a str,
     release_dir: &'a str,
     console_new: &'a str,
 }
 
-fn execute_hook(ctx: &HookContext, hook_name: &str) -> Result<()> {
-    let sanitized_env = sanitize_name(ctx.env_name);
-    let hook_path = if ctx
-        .project_dir
+fn find_hook_file(project_dir: &Path, env_name: &str) -> Option<std::path::PathBuf> {
+    let rhai_file = format!("{}.rhai", env_name);
+    let htdocs_scripts = project_dir
         .join("htdocs/.docker-control/deployment-scripts")
-        .join(format!("{}.sh", ctx.env_name))
-        .exists()
-    {
-        ctx.project_dir
-            .join("htdocs/.docker-control/deployment-scripts")
-            .join(format!("{}.sh", ctx.env_name))
-    } else if ctx
-        .project_dir
-        .join("deployments/scripts")
-        .join(format!("{}.sh", ctx.env_name))
-        .exists()
-    {
-        ctx.project_dir
-            .join("deployments/scripts")
-            .join(format!("{}.sh", ctx.env_name))
-    } else {
-        return Ok(());
+        .join(&rhai_file);
+    if htdocs_scripts.exists() {
+        return Some(htdocs_scripts);
+    }
+    let deployments_scripts = project_dir.join("deployments/scripts").join(&rhai_file);
+    if deployments_scripts.exists() {
+        return Some(deployments_scripts);
+    }
+    None
+}
+
+fn compile_hook(engine: &Engine, path: &Path) -> Result<AST> {
+    engine
+        .compile_file(path.to_path_buf())
+        .map_err(|e| anyhow!("Failed to compile Rhai script: {}", e))
+}
+
+fn execute_hook(
+    engine: &Engine,
+    ast: &Option<AST>,
+    ctx: &HookContext,
+    function_name: &str,
+) -> Result<()> {
+    let ast = match ast {
+        Some(ast) => ast,
+        None => return Ok(()),
     };
 
-    ui::info(format!("Executing hook: {}...", hook_name));
+    ui::info(format!("Executing hook: {}...", function_name));
 
-    let hook_path_str = hook_path.display();
-    let user = ctx.user;
-    let domain = ctx.domain;
-    let release_dir = ctx.release_dir;
-    let console_new = ctx.console_new;
-    let server_root = ctx.server_root;
+    let mut scope = Scope::new();
 
-    let cmd = format!(
-        "exec_ssh() {{ ssh -q -A -o BatchMode=yes -o StrictHostKeyChecking=accept-new \"{user}@{domain}\" -- \"$@\"; }}; \
-        . {hook_path_str} &&\
-        if [[ $(type -t {hook_name}_{sanitized_env}) == \"function\" ]]; then \
-            {hook_name}_{sanitized_env} \"{release_dir}\" \"{console_new}\" \"{server_root}\";\
-        fi",
+    let result: Result<(), Box<rhai::EvalAltResult>> = engine.call_fn(
+        &mut scope,
+        ast,
+        function_name,
+        (
+            ctx.release_dir.to_string(),
+            ctx.console_new.to_string(),
+            ctx.server_root.to_string(),
+        ),
     );
 
-    let status = Command::new("bash").arg("-c").arg(cmd).status()?;
-
-    if !status.success() {
-        ui::warning(format!("Hook {hook_name} failed"));
+    if let Err(e) = result {
+        if let rhai::EvalAltResult::ErrorFunctionNotFound(ref f, _) = *e
+            && f.starts_with(function_name)
+        {
+            return Ok(());
+        }
+        return Err(anyhow!("Hook {} failed: {}", function_name, e));
     }
 
     Ok(())
@@ -658,4 +694,54 @@ async fn send_teams_notification(
     let _ = client.post(webhook_url).json(&body).send().await;
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::fs;
+    use tempfile::tempdir;
+
+    #[test]
+    fn test_execute_hook() -> Result<()> {
+        let dir = tempdir()?;
+        let htdocs_scripts = dir.path().join("htdocs/.docker-control/deployment-scripts");
+        fs::create_dir_all(&htdocs_scripts)?;
+
+        let rhai_content = r#"
+            fn pre_deploy(release_dir, console_new, server_root) {
+                exec_ssh("echo pre_deploy " + release_dir);
+            }
+            fn post_deploy(release_dir, console_new, server_root) {
+                exec_ssh("echo post_deploy " + console_new);
+            }
+        "#;
+        fs::write(htdocs_scripts.join("test_env.rhai"), rhai_content)?;
+
+        let ctx = HookContext {
+            server_root: "/var/www",
+            release_dir: "20240101_v1",
+            console_new: "php bin/console",
+        };
+
+        // Reset mock commands
+        MOCK_SSH_COMMANDS.with(|c| c.borrow_mut().clear());
+
+        let rhai_engine = setup_rhai_engine("user".to_string(), "example.com".to_string());
+        let rhai_ast = find_hook_file(dir.path(), "test_env")
+            .map(|path| compile_hook(&rhai_engine, &path).expect("Failed to compile"));
+
+        execute_hook(&rhai_engine, &rhai_ast, &ctx, "pre_deploy")?;
+        execute_hook(&rhai_engine, &rhai_ast, &ctx, "post_deploy")?;
+        execute_hook(&rhai_engine, &rhai_ast, &ctx, "done_deploy")?; // Should do nothing as it's not in script
+
+        MOCK_SSH_COMMANDS.with(|c| {
+            let cmds = c.borrow();
+            assert_eq!(cmds.len(), 2);
+            assert_eq!(cmds[0], "echo pre_deploy 20240101_v1");
+            assert_eq!(cmds[1], "echo post_deploy php bin/console");
+        });
+
+        Ok(())
+    }
 }
