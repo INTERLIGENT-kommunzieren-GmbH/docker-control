@@ -236,7 +236,7 @@ async fn async_main() -> anyhow::Result<()> {
     // Return early if metadata is requested, no dependencies needed
     if args.iter().any(|arg| arg == "docker-cli-plugin-metadata") {
         let metadata = serde_json::json!({
-            "SchemaVersion": "2.0.0",
+            "SchemaVersion": "0.1.0",
             "Vendor": "INTERLIGENT kommunizieren GmbH",
             "Version": env!("CARGO_PKG_VERSION"),
             "ShortDescription": "IK Docker Control CLI Plugin"
