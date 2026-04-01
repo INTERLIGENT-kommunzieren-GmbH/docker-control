@@ -10,7 +10,7 @@
 
 // --- PRE-DEPLOY HOOK ---
 // Executed before cache clearing and migrations
-fn pre_deploy(release_dir, console_new, server_root) {
+fn pre_deploy(console_current, release_dir, console_new, server_root) {
     print("Executing pre-deploy hook...");
     print("Release: " + release_dir);
 
@@ -20,7 +20,7 @@ fn pre_deploy(release_dir, console_new, server_root) {
 
 // --- POST-DEPLOY HOOK ---
 // Executed after migrations and COPS integration, but before switching symlink
-fn post_deploy(release_dir, console_new, server_root) {
+fn post_deploy(console_current, release_dir, console_new, server_root) {
     print("Executing post-deploy hook...");
 
     // Example: Clear some custom cache on the remote server
@@ -29,7 +29,7 @@ fn post_deploy(release_dir, console_new, server_root) {
 
 // --- DONE-DEPLOY HOOK ---
 // Executed after symlink update and final bytecode cache clear
-fn done_deploy(release_dir, console_new, server_root) {
+fn done_deploy(console_current, release_dir, console_new, server_root) {
     print("Deployment completed!");
 
     // Example: Send a custom notification or trigger a webhook

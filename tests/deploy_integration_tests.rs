@@ -330,13 +330,13 @@ async fn test_deploy_hooks() -> Result<()> {
     let hooks_dir = repo.root.join("deployments/scripts");
     fs::create_dir_all(&hooks_dir)?;
     let hook_content = r#"
-fn pre_deploy(release_dir, console_new, server_root) {
+fn pre_deploy(console_current, release_dir, console_new, server_root) {
     exec_ssh("custom-pre-hook-command " + release_dir + " " + console_new + " " + server_root);
 }
-fn post_deploy(release_dir, console_new, server_root) {
+fn post_deploy(console_current, release_dir, console_new, server_root) {
     exec_ssh("custom-post-hook-command " + release_dir + " " + console_new + " " + server_root);
 }
-fn done_deploy(release_dir, console_new, server_root) {
+fn done_deploy(console_current, release_dir, console_new, server_root) {
     exec_ssh("custom-done-hook-command " + release_dir + " " + console_new + " " + server_root);
 }
 "#;
@@ -536,10 +536,10 @@ async fn test_deploy_order_full_verification() -> Result<()> {
     let hooks_dir = repo.root.join("deployments/scripts");
     fs::create_dir_all(&hooks_dir)?;
     let hook_content = r#"
-fn pre_deploy(release_dir, console_new, server_root) {
+fn pre_deploy(console_current, release_dir, console_new, server_root) {
     exec_ssh("custom-pre-hook-command");
 }
-fn post_deploy(release_dir, console_new, server_root) {
+fn post_deploy(console_current, release_dir, console_new, server_root) {
     exec_ssh("custom-post-hook-command");
 }
 "#;

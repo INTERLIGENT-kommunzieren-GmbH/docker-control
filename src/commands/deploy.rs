@@ -88,6 +88,8 @@ pub async fn execute(
     }
     let archive_path = deployments_dir.join(&archive_name);
 
+    // @todo: call pre_create_archive_hook
+
     if let Err(e) = create_deployment_archive(project_dir, &release, &archive_path).await {
         if let Some(webhook) = &env.teams_webhook_url {
             let _ = send_teams_notification(
@@ -315,11 +317,7 @@ async fn perform_deployment(ctx: DeploymentContext<'_>) -> Result<()> {
     );
     let _ = ssh::exec_ssh(user, domain, &cleanup_cmd);
 
-    // 5. Reload FPM
-    ui::info("Reloading FPM...");
-    let _ = ssh::exec_ssh(user, domain, "sudo php-fpm-reload.sh");
-
-    // 6. Shared paths
+    // 5. Shared paths
     ui::info("Handling shared paths...");
     if let Some(dirs) = &ctx.env.shared_directories {
         for dir in dirs {
@@ -354,17 +352,7 @@ async fn perform_deployment(ctx: DeploymentContext<'_>) -> Result<()> {
         }
     }
 
-    // 7. Maintenance mode selection and activation
-    let maintenance_mode = if ctx.yes {
-        ctx.maintenance_mode.to_string()
-    } else {
-        Select::new("Select maintenance mode", vec!["hard", "soft"])
-            .with_starting_cursor(if ctx.maintenance_mode == "soft" { 1 } else { 0 })
-            .prompt()?
-            .to_string()
-    };
-    ui::info(format!("Enabling maintenance mode ({})", maintenance_mode));
-
+    // 6. prepare console commands
     let (php_bin, php_cmd) = if ctx.console_command.starts_with("php ") {
         (
             "php",
@@ -387,6 +375,34 @@ async fn perform_deployment(ctx: DeploymentContext<'_>) -> Result<()> {
         php_cmd
     );
 
+    // 7. Rhai setup
+    let rhai_engine = setup_rhai_engine(user.to_string(), domain.to_string());
+    let rhai_ast = find_hook_file(ctx.project_dir, ctx.env_name)
+        .map(|path| compile_hook(&rhai_engine, &path))
+        .transpose()?;
+
+    let hook_ctx = HookContext {
+        server_root: ctx.server_root,
+        release_dir: ctx.release_dir,
+        console_current: &console_current,
+        console_new: &console_new,
+    };
+
+    // 8. Reload FPM
+    ui::info("Reloading FPM...");
+    let _ = ssh::exec_ssh(user, domain, "sudo php-fpm-reload.sh");
+
+    // 9. Maintenance mode selection and activation
+    let maintenance_mode = if ctx.yes {
+        ctx.maintenance_mode.to_string()
+    } else {
+        Select::new("Select maintenance mode", vec!["hard", "soft"])
+            .with_starting_cursor(if ctx.maintenance_mode == "soft" { 1 } else { 0 })
+            .prompt()?
+            .to_string()
+    };
+    ui::info(format!("Enabling maintenance mode ({})", maintenance_mode));
+
     // We try to enable maintenance on current if it exists, and on new.
     let _ = ssh::exec_ssh(
         user,
@@ -402,22 +418,10 @@ async fn perform_deployment(ctx: DeploymentContext<'_>) -> Result<()> {
         &format!("{} shared:maintenance {}", console_new, maintenance_mode),
     );
 
-    // 7. Rhai setup
-    let rhai_engine = setup_rhai_engine(user.to_string(), domain.to_string());
-    let rhai_ast = find_hook_file(ctx.project_dir, ctx.env_name)
-        .map(|path| compile_hook(&rhai_engine, &path))
-        .transpose()?;
-
-    let hook_ctx = HookContext {
-        server_root: ctx.server_root,
-        release_dir: ctx.release_dir,
-        console_new: &console_new,
-    };
-
-    // 8. Hooks: pre_deploy
+    // 10. Hooks: pre_deploy
     execute_hook(&rhai_engine, &rhai_ast, &hook_ctx, "pre_deploy")?;
 
-    // 9. Cache clearing, migrations, etc.
+    // 11. Cache clearing, migrations, etc.
     ui::info("Executing deployment tasks...");
     ssh::exec_ssh(user, domain, &format!("{} shared:clear-opcc", console_new))?;
     ssh::exec_ssh(
@@ -467,7 +471,7 @@ async fn perform_deployment(ctx: DeploymentContext<'_>) -> Result<()> {
         )?;
     }
 
-    // 9. COPS Integration
+    // 12. COPS Integration
     if ctx.env.cops_integration.unwrap_or(false) {
         ui::info("Executing COPS integration...");
 
@@ -595,6 +599,7 @@ fn setup_rhai_engine(_user: String, _domain: String) -> Engine {
 struct HookContext<'a> {
     server_root: &'a str,
     release_dir: &'a str,
+    console_current: &'a str,
     console_new: &'a str,
 }
 
@@ -631,7 +636,7 @@ fn execute_hook(
     };
 
     ui::info(format!("Executing hook: {}...", function_name));
-
+    
     let mut scope = Scope::new();
 
     let result: Result<(), Box<rhai::EvalAltResult>> = engine.call_fn(
@@ -639,6 +644,7 @@ fn execute_hook(
         ast,
         function_name,
         (
+            ctx.console_current.to_string(),
             ctx.release_dir.to_string(),
             ctx.console_new.to_string(),
             ctx.server_root.to_string(),
@@ -709,10 +715,10 @@ mod tests {
         fs::create_dir_all(&htdocs_scripts)?;
 
         let rhai_content = r#"
-            fn pre_deploy(release_dir, console_new, server_root) {
+            fn pre_deploy(console_current, release_dir, console_new, server_root) {
                 exec_ssh("echo pre_deploy " + release_dir);
             }
-            fn post_deploy(release_dir, console_new, server_root) {
+            fn post_deploy(console_current, release_dir, console_new, server_root) {
                 exec_ssh("echo post_deploy " + console_new);
             }
         "#;
@@ -722,6 +728,7 @@ mod tests {
             server_root: "/var/www",
             release_dir: "20240101_v1",
             console_new: "php bin/console",
+            console_current: "php bin/console",
         };
 
         // Reset mock commands
