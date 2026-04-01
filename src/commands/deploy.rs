@@ -636,7 +636,7 @@ fn execute_hook(
     };
 
     ui::info(format!("Executing hook: {}...", function_name));
-    
+
     let mut scope = Scope::new();
 
     let result: Result<(), Box<rhai::EvalAltResult>> = engine.call_fn(
