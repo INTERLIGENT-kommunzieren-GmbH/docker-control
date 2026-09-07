@@ -457,6 +457,12 @@ You typically start it once per machine.
 | `pull-ingress` | Pull the latest ingress images. |
 | `trust-ca` | Trust the ingress CA certificate on this host. |
 
+`start-ingress` records which ingress configuration the proxy was started from. If a later
+release changes it, `start`, `restart`, `status` and `status-ingress` say so and `start`/
+`restart` offer to cycle the proxy; releases that leave the ingress alone stay silent. The
+restart is never automatic, because it briefly drops HTTPS for **every** project on the host.
+An installation with nothing recorded yet is quiet until its next `start-ingress`.
+
 #### `trust-ca`
 Installs the ingress proxy's self-signed CA certificate into the host trust store so your
 project's `https://` dev URLs are trusted without browser warnings. It handles:
@@ -672,6 +678,15 @@ docker-control install-claude
 Upgrade `docker-control` itself via Homebrew (`brew upgrade …/docker-control`). The tool
 also performs a throttled (weekly) background check and, in an interactive terminal, may
 offer to upgrade when a newer version is available.
+
+If the ingress is running, it is stopped before the upgrade and started again afterwards, so
+the proxy doesn't carry the previous release's configuration across. A stopped ingress stays
+stopped, and an upgrade that fails brings the proxy back up before reporting the error.
+
+Upgrading with `brew upgrade` directly is fine — Homebrew has no pre-upgrade hook a formula
+could stop the proxy from, so instead the next `start`, `restart`, `status` or
+`status-ingress` tells you if the proxy is running an older ingress configuration and offers
+to cycle it. See [Ingress](#ingress-reverse-proxy).
 
 ```bash
 docker-control upgrade

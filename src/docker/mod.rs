@@ -1,3 +1,5 @@
+pub mod ingress_state;
+
 use crate::ui;
 use crate::utils::{platform, throttle_cache};
 use anyhow::{Context, Result, anyhow};
@@ -103,7 +105,38 @@ pub fn execute_ingress_compose(args: &[&str]) -> Result<()> {
         ));
     }
 
+    // Record what the proxy is now serving, gated on `up` like the volume sync
+    // above. Every path that brings the ingress up comes through here, so this
+    // is the one writer. `down` deliberately leaves the stamp alone: the
+    // staleness check also requires the proxy to be running, which makes a
+    // stale stamp for a stopped proxy inert.
+    if args.contains(&"up") {
+        ingress_state::record(&ingress_dir);
+    }
+
     Ok(())
+}
+
+/// Whether the ingress proxy is currently up.
+///
+/// Filters on the label the ingress stack puts on its own containers rather
+/// than going through `docker compose ps`, which would need the ingress
+/// directory and `HOMEBREW_PREFIX` interpolation — and, unlike
+/// [`execute_ingress_compose`], this has no side effects. Any failure counts as
+/// "not running": every caller uses it to decide whether to cycle the proxy,
+/// and guessing that a proxy is up when Docker can't be reached would only
+/// produce a confusing follow-up error.
+pub fn ingress_running() -> bool {
+    Command::new("docker")
+        .args([
+            "ps",
+            "-q",
+            "--filter",
+            "label=com.interligent.dockerplugin.proxy=nginx",
+        ])
+        .output()
+        .map(|out| out.status.success() && out.stdout.iter().any(|b| !b.is_ascii_whitespace()))
+        .unwrap_or(false)
 }
 
 fn ensure_ingress_volumes(brew_prefix: &str) -> Result<()> {
@@ -122,6 +155,16 @@ fn ensure_ingress_volumes(brew_prefix: &str) -> Result<()> {
         .join("docker-control")
         .join("ingress")
         .join("volumes");
+
+    // Create the target even when there is nothing to copy into it. The
+    // compose file bind-mounts paths underneath it, and Docker auto-creates a
+    // missing bind-mount source *as root* — which then leaves
+    // `etc/docker-control/ingress` owned by root, so neither the volume sync
+    // nor the ingress state stamp can write there afterwards. A Homebrew
+    // install always has the source and never hits this, but a source build
+    // pointed at its own `DOCKER_CONTROL_INGRESS_DIR` has no
+    // `share/docker-control/ingress` under the prefix.
+    std::fs::create_dir_all(&dst).with_context(|| format!("Failed to create {:?}", dst))?;
 
     if src.exists() {
         ui::debug(format!(

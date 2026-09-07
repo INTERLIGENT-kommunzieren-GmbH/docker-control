@@ -37,6 +37,7 @@ Several of those pre-clap steps scan raw `args` for docker-control's own flags. 
 |---|---|
 | `src/commands/` | One file per subcommand; each exposes an `execute()` function |
 | `src/docker/mod.rs` | Wraps `docker compose` via `std::process::Command`; `bollard` is used for container introspection only |
+| `src/docker/ingress_state.rs` | Fingerprints the ingress assets and stamps what the running proxy was started from |
 | `src/git/mod.rs` | `GitService` wraps `git2`; handles branches, tags, worktrees, cherry-pick, push |
 | `src/ssh/mod.rs` | `exec_ssh` / `copy_ssh` helpers used by deploy |
 | `src/config/mod.rs` | Loads/saves `.deploy.json`; config file search order: `htdocs/.docker-control/.deploy.json` → `.deploy.json` |
@@ -70,6 +71,14 @@ Several of those pre-clap steps scan raw `args` for docker-control's own flags. 
 **SSH agent daemon** — Runs as a separate daemonized process on port 2222 (`SSH_AGENT_PORT`), forwarding the host SSH agent into Docker containers. Automatically started when missing. Controlled via `--start-ssh-agent` / `--stop-ssh-agent` / `--restart-ssh-agent` flags.
 
 **Ingress** — A separate Docker compose stack for the reverse proxy. Located relative to the binary (`../share/docker-control/ingress/`), via `DOCKER_CONTROL_INGRESS_DIR`, or the embedded assets.
+
+The containers bind-mount `$HOMEBREW_PREFIX/etc/docker-control/ingress/volumes/...` and never the keg, so an upgrade doesn't break a running proxy — it just leaves it serving the old `compose.yml` and old volumes, since only `ensure_ingress_volumes` (gated on `up`) re-seeds `etc/` from the new `share/`. `ingress_state` therefore stamps a *content* fingerprint of the ingress directory at every `up`, and `start`/`restart`/`status`/`status-ingress` offer to cycle a proxy whose stamp no longer matches. Three things here are deliberate and easy to undo by accident:
+
+- **A fingerprint, not a version.** `ingress/` is three files and changes in maybe one release in ten, so stamping `CARGO_PKG_VERSION` would prompt for a proxy restart after every upgrade while changing nothing — the same argument the template state makes. A missing or unparseable stamp is "unknown", never "stale": nothing but a `start-ingress` can clear it, so reporting it would nag forever.
+- **None of this can live in the Homebrew formula.** A formula's only hook is `post_install`, which runs *after* the new keg is linked (so it can never stop the proxy first) and runs sandboxed with `deny_read_home` + `deny_all_network` (so it can reach neither the Docker socket nor the `~/.docker` context). `preflight`/`uninstall_preflight` would give exactly the wanted semantics but are cask-only, and casks are macOS-only while `is_brew_eligible` covers native Linux too. `brew upgrade` also has no service-restart logic, so a `service` block buys nothing. Hence the notice-on-next-run design, which additionally covers `brew install`, `brew postinstall` and a hand-swapped binary.
+- **`upgrade` starts the ingress by spawning the newly installed binary**, not in-process. `find_ingress_dir` resolves assets from the canonicalised `current_exe()`, and after `brew upgrade` returns this process is still the *old* keg — in-process it would re-seed `etc/.../volumes` from the old `share/` and start the old `compose.yml`, i.e. reintroduce the exact staleness being cleared. The failed-upgrade path is the opposite and restores in-process on purpose, because there the keg didn't change.
+
+`ensure_ingress_volumes` creates its target directory even with no source to copy: Docker auto-creates a missing bind-mount source **as root**, which leaves `etc/docker-control/ingress` unwritable for every later run (including the stamp). Homebrew installs always have the source; a source build using `DOCKER_CONTROL_INGRESS_DIR` does not.
 
 **Custom commands** — Shell scripts in `control-scripts/` or `htdocs/.docker-control/control-scripts/` are dispatched as external subcommands.
 

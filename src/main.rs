@@ -674,6 +674,7 @@ async fn async_main() -> anyhow::Result<()> {
             check_managed(&project_dir);
             utils::dependencies::require_acl_tools()?;
             maybe_report_template_drift(&project_dir);
+            maybe_restart_stale_ingress(true);
             maybe_offer_image_pull(&project_dir);
             docker::execute_compose(&project_dir, &["down", "--remove-orphans"])?;
             docker::execute_compose(&project_dir, &["up", "-d"])?;
@@ -723,6 +724,7 @@ async fn async_main() -> anyhow::Result<()> {
             check_managed(&project_dir);
             utils::dependencies::require_acl_tools()?;
             maybe_report_template_drift(&project_dir);
+            maybe_restart_stale_ingress(true);
             maybe_offer_image_pull(&project_dir);
             docker::execute_compose(&project_dir, &["up", "-d"])?;
             if let Err(e) = utils::acl::apply_host_acl(&project_dir) {
@@ -745,9 +747,11 @@ async fn async_main() -> anyhow::Result<()> {
             commands::status::execute(&project_dir).await?;
             // Also show docker compose ps as it was before
             let _ = docker::execute_compose(&project_dir, &["ps"]);
+            maybe_restart_stale_ingress(false);
         }
         Commands::StatusIngress => {
             docker::execute_ingress_compose(&["ps"])?;
+            maybe_restart_stale_ingress(false);
         }
         Commands::Stop => {
             check_managed(&project_dir);
@@ -946,6 +950,68 @@ fn maybe_report_template_drift(project_dir: &std::path::Path) {
     });
     summary.print(true);
     ui::info("  Run `docker control update` to apply, or `update --check` to see the diffs.");
+}
+
+/// Tells the user when the running ingress proxy was started from a different
+/// ingress stack than this binary ships, and offers to cycle it.
+///
+/// This is the case a plain `brew upgrade` leaves behind. Homebrew has no
+/// pre-upgrade hook for a formula to stop the proxy from, and its only hook —
+/// `post_install` — runs sandboxed without `$HOME` or network access, so it
+/// cannot reach the Docker socket either (see `docker::ingress_state`). The
+/// tool therefore has to notice on a later invocation. `docker control upgrade`
+/// owns the whole sequence and does the real stop/start itself.
+///
+/// `prompt` is `false` for the `status`-style commands: they must not change
+/// what they are reporting on. Best-effort throughout — a notice about the
+/// proxy must never block the command being run.
+fn maybe_restart_stale_ingress(prompt: bool) {
+    // Cheap first: one small file read plus a hash of the handful of files in
+    // `ingress/`. Only once that says something changed is the `docker ps`
+    // behind `ingress_running` worth paying for.
+    let Some(recorded) = docker::ingress_state::stale() else {
+        return;
+    };
+
+    if !docker::ingress_running() {
+        // Nothing to cycle. The next `start-ingress` re-stamps anyway.
+        return;
+    }
+
+    // Naming both versions is only informative when they differ; a dev build or
+    // `DOCKER_CONTROL_INGRESS_DIR` can change the assets without a version
+    // bump, and "changed between X and X" reads as a bug.
+    let current = env!("CARGO_PKG_VERSION");
+    ui::warning(if recorded.started_with == current {
+        "The running ingress was started from a different configuration than the one now installed."
+            .to_string()
+    } else {
+        format!(
+            "The ingress configuration changed between {} and {}; the running proxy is still on the old one.",
+            recorded.started_with, current
+        )
+    });
+
+    if !prompt || !std::io::stdin().is_terminal() {
+        ui::info("  Run `docker control restart-ingress` to apply it.");
+        return;
+    }
+
+    // Never automatic: restarting the proxy briefly drops HTTPS for every
+    // project on this host, not just the one being started.
+    if Confirm::new("Restart the ingress now?")
+        .with_default(true)
+        .prompt()
+        .unwrap_or(false)
+    {
+        if let Err(e) = docker::execute_ingress_compose(&["down"])
+            .and_then(|()| docker::execute_ingress_compose(&["up", "-d"]))
+        {
+            ui::warning(format!("Failed to restart the ingress: {}", e));
+        }
+    } else {
+        ui::info("  Run `docker control restart-ingress` when convenient.");
+    }
 }
 
 fn maybe_offer_image_pull(project_dir: &std::path::Path) {
