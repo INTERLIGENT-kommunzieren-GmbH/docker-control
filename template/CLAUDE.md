@@ -9,7 +9,7 @@ Guidance for Claude Code (claude.ai/code) when working in this project.
 ## What this is
 
 A **Dockerized PHP / LAMP project managed by `docker-control`**. The whole container
-stack (Apache+mod_php, MariaDB, phpMyAdmin, Gotenberg, Valkey/Redis, Mailpit, logrotate)
+stack (Apache+mod_php, MariaDB, phpMyAdmin, Gotenberg, Valkey as `cache`, Mailpit, logrotate)
 is described in `compose.yml`, but you should **operate it through the `docker-control`
 CLI, not raw `docker` / `docker compose`** — the CLI wires up SSH agent forwarding,
 ACL/permission fixes, ingress, secrets and env handling for you.

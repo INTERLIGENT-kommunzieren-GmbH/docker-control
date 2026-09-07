@@ -87,7 +87,11 @@ services:
     networks:
       - "backend-tier"
 
-  redis:
+  cache:
+    labels:
+      com.interligent.dockerplugin.service: "cache"
+      com.interligent.dockerplugin.dir: "${PWD}"
+      com.interligent.dockerplugin.project: "${PROJECTNAME}"
     image: valkey/valkey:8.1
     command: >
       valkey-server
@@ -98,7 +102,12 @@ services:
       --maxmemory 512mb
       --maxmemory-policy allkeys-lru
     networks:
-      - "backend-tier"
+      backend-tier:
+        # The service name `cache` resolves automatically; `redis` is kept as an
+        # additional name so applications configured against the old service name
+        # keep working. Compatibility shim — to be dropped once they have moved.
+        aliases:
+          - redis
     deploy:
       restart_policy:
         condition: any
@@ -109,6 +118,8 @@ services:
         reservations:
           memory: 512M
     volumes:
+      # Deliberately still `valkey/`: renaming the host path would abandon the
+      # appendonly data (and any sessions in it) on every existing project.
       - "./volumes/valkey/persist:/data"
 
   mail:

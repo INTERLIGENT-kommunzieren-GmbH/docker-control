@@ -362,7 +362,7 @@ fn apply_template_update(
     let was_running = docker::is_running(project_dir);
     if was_running {
         ui::info("Stopping project...");
-        docker::execute_compose(project_dir, &["down"])?;
+        docker::execute_compose(project_dir, &["down", "--remove-orphans"])?;
     }
 
     create_backup(project_dir)?;

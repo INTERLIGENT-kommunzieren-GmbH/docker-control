@@ -218,7 +218,10 @@ docker-control start
 ```
 
 #### `stop`
-Stop the project containers (`docker compose down`).
+Stop the project containers (`docker compose down --remove-orphans`). Orphans are
+removed so that a container left behind by an earlier version of the template — one
+whose service no longer exists in `compose.yml` — does not keep running alongside the
+current stack.
 
 ```bash
 docker-control stop
@@ -798,7 +801,7 @@ The easiest way to create/extend this file is `docker-control add-deploy-config`
 | `phpmyadmin` | `phpmyadmin` | DB admin UI at `/_phpmyadmin/`. |
 | `mail` | `axllent/mailpit` | Catch-all mail UI at `/_mail/`. |
 | `gotenberg` | `gotenberg/gotenberg:8-chromium` | PDF/document conversion service. |
-| `redis` | `valkey/valkey:8.1` | Redis-compatible cache/store. |
+| `cache` | `valkey/valkey:8.1` | Redis-compatible cache/store. Also reachable under its former name `redis`. |
 | `logrotate` | `ghcr.io/fduarte42/logrotate` | Rotates container logs. |
 
 Networking: the `frontend-tier` is the external `proxy` network (the ingress); the

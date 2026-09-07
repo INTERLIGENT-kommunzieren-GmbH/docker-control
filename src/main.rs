@@ -675,7 +675,7 @@ async fn async_main() -> anyhow::Result<()> {
             utils::dependencies::require_acl_tools()?;
             maybe_report_template_drift(&project_dir);
             maybe_offer_image_pull(&project_dir);
-            docker::execute_compose(&project_dir, &["down"])?;
+            docker::execute_compose(&project_dir, &["down", "--remove-orphans"])?;
             docker::execute_compose(&project_dir, &["up", "-d"])?;
             if let Err(e) = utils::acl::apply_host_acl(&project_dir) {
                 ui::warning(format!(
@@ -751,7 +751,7 @@ async fn async_main() -> anyhow::Result<()> {
         }
         Commands::Stop => {
             check_managed(&project_dir);
-            docker::execute_compose(&project_dir, &["down"])?;
+            docker::execute_compose(&project_dir, &["down", "--remove-orphans"])?;
         }
         Commands::StopIngress => {
             docker::execute_ingress_compose(&["down"])?;
