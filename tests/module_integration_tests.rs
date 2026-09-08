@@ -15,7 +15,9 @@ use std::path::Path;
 struct MockPrompts {
     link: Option<String>,
     unlink: Option<String>,
+    purge: Option<String>,
     confirm_purge: bool,
+    confirm_discard_vendor: bool,
 }
 
 impl ModulePromptProvider for MockPrompts {
@@ -33,8 +35,19 @@ impl ModulePromptProvider for MockPrompts {
             .unwrap_or_else(|| modules.first().cloned().unwrap_or_default()))
     }
 
-    fn confirm_purge(&self, _module: &str) -> Result<bool> {
+    fn select_module_to_purge(&self, modules: Vec<String>) -> Result<String> {
+        Ok(self
+            .purge
+            .clone()
+            .unwrap_or_else(|| modules.first().cloned().unwrap_or_default()))
+    }
+
+    fn confirm_purge(&self, _module: &str, _warned: bool) -> Result<bool> {
         Ok(self.confirm_purge)
+    }
+
+    fn confirm_discard_vendor(&self, _module: &str) -> Result<bool> {
+        Ok(self.confirm_discard_vendor)
     }
 }
 
@@ -94,8 +107,37 @@ fn link_action(module: &str) -> ModuleAction {
     ModuleAction::Link {
         module: Some(module.to_string()),
         version: None,
+        yes: false,
         composer_args: Vec::new(),
     }
+}
+
+fn purge_action(module: Option<&str>) -> ModuleAction {
+    ModuleAction::Purge {
+        module: module.map(str::to_string),
+        yes: false,
+    }
+}
+
+/// The on-disk shape a plain `unlink` leaves: the development checkout stays in
+/// `modules/`, and Composer's `update --prefer-source` has put a real clone back
+/// under `vendor/`. Returns the path of the checkout.
+fn shape_after_plain_unlink(htdocs: &Path) -> Result<std::path::PathBuf> {
+    let dev_path = htdocs.join("modules/test/module");
+    fs::create_dir_all(dev_path.parent().unwrap())?;
+    fs::rename(htdocs.join("vendor/test/module"), &dev_path)?;
+
+    // Composer reinstalls a real source clone where the symlink used to be.
+    let vendor_path = htdocs.join("vendor/test/module");
+    TestRepo::git_run(
+        htdocs,
+        &[
+            "clone",
+            &dev_path.to_string_lossy(),
+            &vendor_path.to_string_lossy(),
+        ],
+    )?;
+    Ok(dev_path)
 }
 
 /// Stands in for what Composer does on a successful `link`, so `unlink` and `list`
@@ -358,6 +400,7 @@ fn link_requires_an_explicit_version_when_the_lock_has_none() -> Result<()> {
         ModuleAction::Link {
             module: Some("test/module".to_string()),
             version: Some("1.0.x-dev".to_string()),
+            yes: false,
             composer_args: Vec::new(),
         },
         options(MockPrompts::default()),
@@ -1026,5 +1069,273 @@ fn phpstorm_registration_is_idempotent_and_optional() -> Result<()> {
         "file stays well-formed: {}",
         vcs
     );
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// module purge, and re-linking a checkout an unlink left behind
+// ---------------------------------------------------------------------------
+
+#[test]
+fn purge_removes_a_stray_checkout_after_confirmation() -> Result<()> {
+    let repo = setup("purge_stray")?;
+    let htdocs = repo.root.join("htdocs");
+    let dev_path = shape_after_plain_unlink(&htdocs)?;
+    assert!(dev_path.exists());
+
+    execute(
+        &repo.root,
+        purge_action(Some("test/module")),
+        options(MockPrompts {
+            confirm_purge: true,
+            ..Default::default()
+        }),
+    )?;
+
+    assert!(!dev_path.exists(), "the checkout should be gone");
+    assert!(
+        !htdocs.join("modules").exists(),
+        "emptied modules/ should be pruned"
+    );
+    // The vendor install is untouched — purge is not an unlink.
+    assert!(htdocs.join("vendor/test/module").exists());
+    Ok(())
+}
+
+#[test]
+fn purge_declined_keeps_the_checkout() -> Result<()> {
+    let repo = setup("purge_declined")?;
+    let htdocs = repo.root.join("htdocs");
+    let dev_path = shape_after_plain_unlink(&htdocs)?;
+
+    execute(
+        &repo.root,
+        purge_action(Some("test/module")),
+        options(MockPrompts {
+            confirm_purge: false,
+            ..Default::default()
+        }),
+    )?;
+
+    assert!(dev_path.exists(), "declining must keep the checkout");
+    Ok(())
+}
+
+/// A clean checkout is still confirmed: unlike `unlink --purge`, no flag opted in.
+#[test]
+fn purge_confirms_even_a_clean_checkout() -> Result<()> {
+    let repo = setup("purge_clean_confirms")?;
+    let htdocs = repo.root.join("htdocs");
+    let dev_path = shape_after_plain_unlink(&htdocs)?;
+
+    execute(
+        &repo.root,
+        purge_action(Some("test/module")),
+        options(MockPrompts {
+            confirm_purge: false,
+            ..Default::default()
+        }),
+    )?;
+
+    assert!(
+        dev_path.exists(),
+        "a clean checkout must not be deleted without a yes"
+    );
+    Ok(())
+}
+
+#[test]
+fn purge_refuses_a_module_that_is_still_linked() -> Result<()> {
+    let repo = setup("purge_linked")?;
+    let htdocs = repo.root.join("htdocs");
+    execute(
+        &repo.root,
+        link_action("test/module"),
+        options(MockPrompts::default()),
+    )?;
+    fake_composer_link(&htdocs, "test/module", "1.0.x-dev")?;
+
+    let err = execute(
+        &repo.root,
+        purge_action(Some("test/module")),
+        options(MockPrompts {
+            confirm_purge: true,
+            ..Default::default()
+        }),
+    )
+    .unwrap_err()
+    .to_string();
+
+    assert!(err.contains("still linked"), "unexpected error: {}", err);
+    assert!(err.contains("--purge"), "should point at unlink --purge");
+    assert!(htdocs.join("modules/test/module").exists());
+    Ok(())
+}
+
+#[test]
+fn purge_reports_when_there_is_no_such_checkout() -> Result<()> {
+    let repo = setup("purge_unknown")?;
+    let htdocs = repo.root.join("htdocs");
+    shape_after_plain_unlink(&htdocs)?;
+
+    let err = execute(
+        &repo.root,
+        purge_action(Some("other/thing")),
+        options(MockPrompts {
+            confirm_purge: true,
+            ..Default::default()
+        }),
+    )
+    .unwrap_err()
+    .to_string();
+
+    assert!(err.contains("No development checkout"), "got: {}", err);
+    assert!(
+        err.contains("test/module"),
+        "should list the strays: {}",
+        err
+    );
+    Ok(())
+}
+
+#[test]
+fn purge_without_an_argument_picks_the_stray_checkout() -> Result<()> {
+    let repo = setup("purge_prompted")?;
+    let htdocs = repo.root.join("htdocs");
+    let dev_path = shape_after_plain_unlink(&htdocs)?;
+
+    execute(
+        &repo.root,
+        purge_action(None),
+        options(MockPrompts {
+            confirm_purge: true,
+            ..Default::default()
+        }),
+    )?;
+
+    assert!(!dev_path.exists());
+    Ok(())
+}
+
+#[test]
+fn purge_errors_when_nothing_is_left_to_purge() -> Result<()> {
+    let repo = setup("purge_nothing")?;
+    let err = execute(
+        &repo.root,
+        purge_action(None),
+        options(MockPrompts::default()),
+    )
+    .unwrap_err()
+    .to_string();
+
+    assert!(err.contains("nothing to purge"), "got: {}", err);
+    Ok(())
+}
+
+/// The regression: after `unlink` without `--purge`, both directories exist and
+/// `link` used to refuse outright. The `modules/` checkout must win — proven by a
+/// marker file that only exists there.
+#[test]
+fn link_reuses_the_checkout_left_by_a_plain_unlink() -> Result<()> {
+    let repo = setup("relink_after_unlink")?;
+    let htdocs = repo.root.join("htdocs");
+    let dev_path = shape_after_plain_unlink(&htdocs)?;
+    fs::write(dev_path.join("WORK-IN-PROGRESS.md"), "my unfinished work")?;
+
+    assert!(htdocs.join("vendor/test/module").is_dir());
+    assert!(dev_path.is_dir());
+
+    execute(
+        &repo.root,
+        link_action("test/module"),
+        options(MockPrompts::default()),
+    )?;
+
+    assert!(
+        dev_path.join("WORK-IN-PROGRESS.md").exists(),
+        "the developer's checkout must be the copy that survives"
+    );
+    assert!(
+        !htdocs.join("vendor/test/module").exists(),
+        "the stale vendor copy should have been discarded, clearing the way for the symlink"
+    );
+    Ok(())
+}
+
+#[test]
+fn link_refuses_to_discard_a_dirty_vendor_copy_when_declined() -> Result<()> {
+    let repo = setup("relink_dirty_vendor")?;
+    let htdocs = repo.root.join("htdocs");
+    let dev_path = shape_after_plain_unlink(&htdocs)?;
+
+    let vendor_path = htdocs.join("vendor/test/module");
+    fs::write(vendor_path.join("edited-in-vendor.md"), "unsaved work")?;
+
+    let err = execute(
+        &repo.root,
+        link_action("test/module"),
+        options(MockPrompts {
+            confirm_discard_vendor: false,
+            ..Default::default()
+        }),
+    )
+    .unwrap_err()
+    .to_string();
+
+    assert!(err.contains("exist as real directories"), "got: {}", err);
+    assert!(vendor_path.exists(), "nothing may be deleted after a no");
+    assert!(dev_path.exists());
+    Ok(())
+}
+
+#[test]
+fn link_discards_a_dirty_vendor_copy_once_confirmed() -> Result<()> {
+    let repo = setup("relink_dirty_confirmed")?;
+    let htdocs = repo.root.join("htdocs");
+    let dev_path = shape_after_plain_unlink(&htdocs)?;
+    fs::write(
+        htdocs.join("vendor/test/module/edited-in-vendor.md"),
+        "unsaved work",
+    )?;
+
+    execute(
+        &repo.root,
+        link_action("test/module"),
+        options(MockPrompts {
+            confirm_discard_vendor: true,
+            ..Default::default()
+        }),
+    )?;
+
+    assert!(!htdocs.join("vendor/test/module").exists());
+    assert!(dev_path.exists());
+    Ok(())
+}
+
+#[test]
+fn list_reports_a_stray_checkout() -> Result<()> {
+    let repo = setup("list_stray")?;
+    let htdocs = repo.root.join("htdocs");
+    shape_after_plain_unlink(&htdocs)?;
+    // Remove the vendor reinstall so the module is *only* a stray.
+    fs::remove_dir_all(htdocs.join("vendor/test/module"))?;
+
+    // `list` prints; asserting it runs and that the stray is what purge resolves to
+    // is the observable contract here.
+    execute(
+        &repo.root,
+        ModuleAction::List,
+        options(MockPrompts::default()),
+    )?;
+
+    execute(
+        &repo.root,
+        purge_action(None),
+        options(MockPrompts {
+            confirm_purge: true,
+            ..Default::default()
+        }),
+    )?;
+    assert!(!htdocs.join("modules/test/module").exists());
     Ok(())
 }

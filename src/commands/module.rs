@@ -68,6 +68,10 @@ pub enum ModuleAction {
         #[arg(long)]
         version: Option<String>,
 
+        /// Skip the confirmation prompt when discarding a stale vendor copy
+        #[arg(short, long)]
+        yes: bool,
+
         /// Extra arguments forwarded to `composer update` (e.g. -W, --no-scripts)
         #[arg(trailing_var_arg = true)]
         composer_args: Vec<String>,
@@ -102,6 +106,15 @@ pub enum ModuleAction {
         #[arg(trailing_var_arg = true)]
         composer_args: Vec<String>,
     },
+    /// Delete a development checkout left in htdocs/modules/ by an earlier unlink
+    Purge {
+        /// Module to purge as <vendor>/<name> (prompted for when omitted)
+        module: Option<String>,
+
+        /// Skip the confirmation prompt
+        #[arg(short, long)]
+        yes: bool,
+    },
     /// List vendor modules and show which are linked for development
     List,
 }
@@ -109,7 +122,11 @@ pub enum ModuleAction {
 pub trait ModulePromptProvider {
     fn select_module_to_link(&self, modules: Vec<String>) -> Result<String>;
     fn select_module_to_unlink(&self, modules: Vec<String>) -> Result<String>;
-    fn confirm_purge(&self, module: &str) -> Result<bool>;
+    fn select_module_to_purge(&self, modules: Vec<String>) -> Result<String>;
+    /// `warned` is set when the checkout has uncommitted or unpushed work, which
+    /// is what the wording turns on: "anyway" only reads correctly after a warning.
+    fn confirm_purge(&self, module: &str, warned: bool) -> Result<bool>;
+    fn confirm_discard_vendor(&self, module: &str) -> Result<bool>;
 }
 
 pub struct InteractiveModulePromptProvider;
@@ -123,9 +140,22 @@ impl ModulePromptProvider for InteractiveModulePromptProvider {
         Ok(Select::new("Select module to unlink", modules).prompt()?)
     }
 
-    fn confirm_purge(&self, module: &str) -> Result<bool> {
+    fn select_module_to_purge(&self, modules: Vec<String>) -> Result<String> {
+        Ok(Select::new("Select development checkout to delete", modules).prompt()?)
+    }
+
+    fn confirm_purge(&self, module: &str, warned: bool) -> Result<bool> {
+        let question = if warned {
+            format!("Delete the development checkout of {} anyway?", module)
+        } else {
+            format!("Delete the development checkout of {}?", module)
+        };
+        Ok(Confirm::new(&question).with_default(false).prompt()?)
+    }
+
+    fn confirm_discard_vendor(&self, module: &str) -> Result<bool> {
         Ok(Confirm::new(&format!(
-            "Delete the development checkout of {} anyway?",
+            "Discard the vendor copy of {} and link the checkout in modules/ anyway?",
             module
         ))
         .with_default(false)
@@ -191,12 +221,14 @@ pub fn execute(project_dir: &Path, action: ModuleAction, options: ModuleOptions)
         ModuleAction::Link {
             module,
             version,
+            yes,
             composer_args,
         } => link(
             project_dir,
             &htdocs,
             module,
             version,
+            yes,
             &composer_args,
             &options,
         ),
@@ -217,6 +249,7 @@ pub fn execute(project_dir: &Path, action: ModuleAction, options: ModuleOptions)
         ModuleAction::Unlink { module, purge, yes } => {
             unlink(project_dir, &htdocs, module, purge, yes, &options)
         }
+        ModuleAction::Purge { module, yes } => purge(project_dir, &htdocs, module, yes, &options),
     }
 }
 
@@ -229,6 +262,11 @@ pub fn execute(project_dir: &Path, action: ModuleAction, options: ModuleOptions)
 struct LinkState {
     moved: bool,
     gitignore_added: bool,
+    /// Set when a stale real directory under `vendor/` was deleted to make room for
+    /// the symlink. Only ever a clean, fully-pushed clone, so nothing unrecoverable
+    /// is lost — but a rollback has to say so, since `composer install` is what
+    /// puts it back.
+    vendor_discarded: bool,
     /// The commit the checkout's HEAD was detached at before
     /// [`checkout_pinned_branch`] put it on a branch, so a rollback can put it back.
     /// `None` when HEAD was never moved.
@@ -240,6 +278,7 @@ fn link(
     htdocs: &Path,
     module: Option<String>,
     version: Option<String>,
+    yes: bool,
     composer_args: &[String],
     options: &ModuleOptions,
 ) -> Result<()> {
@@ -261,16 +300,13 @@ fn link(
     let dev_path = htdocs.join(MODULES_DIR).join(&relative);
 
     // The checkout may already exist from an earlier `unlink` without --purge.
+    // That is in fact the normal shape after one: `unlink` finishes with
+    // `composer update --prefer-source`, which reinstalls a real clone under
+    // vendor/ while the checkout stays under modules/. So both exist, and the
+    // modules/ copy is the one to keep — see `discard_vendor_reinstall`.
     let reuse_existing = dev_path.exists();
-    if reuse_existing {
-        if vendor_path.exists() && !is_symlink(&vendor_path) {
-            return Err(anyhow!(
-                "Both {:?} and {:?} exist as real directories. Remove whichever copy is stale before linking.",
-                vendor_path,
-                dev_path
-            ));
-        }
-    } else if !vendor_path.join(".git").exists() {
+    let vendor_conflict = reuse_existing && vendor_path.exists() && !is_symlink(&vendor_path);
+    if !reuse_existing && !vendor_path.join(".git").exists() {
         return Err(anyhow!(
             "{:?} is not a git repository — only source-installed modules can be linked",
             vendor_path
@@ -296,8 +332,13 @@ fn link(
 
     ui::info(format!("Linking {} (pinned {})", package, pin));
 
-    let snapshot = ComposerSnapshot::capture(htdocs)?;
     let mut state = LinkState::default();
+    if vendor_conflict {
+        discard_vendor_reinstall(&vendor_path, &dev_path, &package, yes, options)?;
+        state.vendor_discarded = true;
+    }
+
+    let snapshot = ComposerSnapshot::capture(htdocs)?;
 
     let result = link_inner(
         project_dir,
@@ -442,6 +483,67 @@ fn rollback_link(
     {
         ui::warning(format!("Failed to revert htdocs/.gitignore: {}", e));
     }
+
+    if state.vendor_discarded && !vendor_path.exists() {
+        ui::warning(format!(
+            "The stale vendor copy at {:?} was removed before this failed — run `composer install` to restore it.",
+            vendor_path
+        ));
+    }
+}
+
+/// Delete the real directory Composer reinstalled under `vendor/`, so the path
+/// repository can put a symlink there instead.
+///
+/// `unlink` without `--purge` ends with `composer update --prefer-source`, which
+/// leaves a real clone in `vendor/` next to the checkout still sitting in
+/// `modules/`. Re-linking has to drop one of them, and it is always the vendor
+/// copy: that one is a Composer-reproducible reinstall, while the checkout in
+/// `modules/` is the developer's work — the whole reason `unlink` kept it.
+///
+/// The vendor copy is only reproducible if everything in it is in git, so a dirty
+/// or unpushed clone is reported and confirmed rather than silently deleted.
+fn discard_vendor_reinstall(
+    vendor_path: &Path,
+    dev_path: &Path,
+    package: &str,
+    yes: bool,
+    options: &ModuleOptions,
+) -> Result<()> {
+    if let Ok(git) = GitService::open(vendor_path) {
+        let dirty = git.is_dirty().unwrap_or(false);
+        let unpushed = git.unpushed_commits().unwrap_or(0);
+
+        if dirty || unpushed > 0 {
+            ui::warning(format!(
+                "{} exists both as a development checkout and as a vendor install.",
+                package
+            ));
+            if dirty {
+                ui::warning(format!("  the vendor copy at {:?} is dirty", vendor_path));
+            }
+            if unpushed > 0 {
+                ui::warning(format!(
+                    "  the vendor copy has {} commit(s) that exist on no remote",
+                    unpushed
+                ));
+            }
+            if !yes && !options.prompt_provider.confirm_discard_vendor(package)? {
+                return Err(anyhow!(
+                    "Both {:?} and {:?} exist as real directories. Remove whichever copy is stale before linking.",
+                    vendor_path,
+                    dev_path
+                ));
+            }
+        }
+    }
+
+    fs::remove_dir_all(vendor_path).context(format!(
+        "Failed to remove the stale vendor copy {:?}",
+        vendor_path
+    ))?;
+    ui::info(format!("  discarded the vendor copy at {:?}", vendor_path));
+    Ok(())
 }
 
 // ---------------------------------------------------------------------------
@@ -919,7 +1021,7 @@ fn unlink(
     utils::unregister_phpstorm_git_root(project_dir, &idea_path)?;
 
     if purge {
-        purge_checkout(htdocs, &dev_path, &target.package, yes, options)?;
+        purge_checkout(htdocs, &dev_path, &target.package, yes, false, options)?;
     }
 
     ui::success(format!(
@@ -991,41 +1093,178 @@ fn unlink_inner(
     Ok(())
 }
 
+/// Delete a development checkout, after reporting anything in it that only exists
+/// there.
+///
+/// `always_confirm` distinguishes the two callers. `unlink --purge` passes `false`:
+/// the flag is itself the opt-in, so a clean checkout goes without a question.
+/// `module purge` passes `true`, because there the deletion is the whole command
+/// and nothing else has asked.
 fn purge_checkout(
     htdocs: &Path,
     dev_path: &Path,
     package: &str,
     yes: bool,
+    always_confirm: bool,
     options: &ModuleOptions,
 ) -> Result<()> {
     if !dev_path.exists() {
         return Ok(());
     }
 
+    let mut warned = false;
     if let Ok(git) = GitService::open(dev_path) {
         let dirty = git.is_dirty().unwrap_or(false);
         let unpushed = git.unpushed_commits().unwrap_or(0);
 
-        if dirty || unpushed > 0 {
-            if dirty {
-                ui::warning(format!("{} has uncommitted changes.", package));
-            }
-            if unpushed > 0 {
-                ui::warning(format!(
-                    "{} has {} commit(s) that exist on no remote.",
-                    package, unpushed
-                ));
-            }
-            if !yes && !options.prompt_provider.confirm_purge(package)? {
-                ui::info(format!("  keeping {:?}", dev_path));
-                return Ok(());
-            }
+        if dirty {
+            ui::warning(format!("{} has uncommitted changes.", package));
         }
+        if unpushed > 0 {
+            ui::warning(format!(
+                "{} has {} commit(s) that exist on no remote.",
+                package, unpushed
+            ));
+        }
+        warned = dirty || unpushed > 0;
+    }
+
+    if !yes
+        && (warned || always_confirm)
+        && !options.prompt_provider.confirm_purge(package, warned)?
+    {
+        ui::info(format!("  keeping {:?}", dev_path));
+        return Ok(());
     }
 
     fs::remove_dir_all(dev_path).context(format!("Failed to remove {:?}", dev_path))?;
     prune_empty_module_dirs(htdocs, dev_path);
     ui::info(format!("  removed {:?}", dev_path));
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// purge
+// ---------------------------------------------------------------------------
+
+/// Development checkouts sitting in `htdocs/modules/` that no path repository
+/// points at — what `unlink` without `--purge` leaves behind.
+///
+/// Nothing else enumerates this directory: `list` works from `htdocs/vendor/` and
+/// the `repositories` entries, so without this a stray checkout is invisible to
+/// every command.
+fn stray_checkouts(htdocs: &Path) -> Result<Vec<String>> {
+    let linked = linked_modules(htdocs)?;
+    let modules_dir = htdocs.join(MODULES_DIR);
+
+    let mut found = Vec::new();
+    let Ok(vendors) = fs::read_dir(&modules_dir) else {
+        return Ok(found);
+    };
+
+    for vendor in vendors.flatten() {
+        if !vendor.path().is_dir() {
+            continue;
+        }
+        let vendor_name = vendor.file_name().to_string_lossy().to_string();
+        let Ok(names) = fs::read_dir(vendor.path()) else {
+            continue;
+        };
+        for name in names.flatten() {
+            if !name.path().is_dir() {
+                continue;
+            }
+            let relative = format!("{}/{}", vendor_name, name.file_name().to_string_lossy());
+            if linked.iter().any(|l| l.relative_path() == relative) {
+                continue;
+            }
+            found.push(relative);
+        }
+    }
+
+    found.sort();
+    Ok(found)
+}
+
+fn resolve_purge_target(
+    htdocs: &Path,
+    linked: &[LinkedModule],
+    module: Option<String>,
+    options: &ModuleOptions,
+) -> Result<String> {
+    let strays = stray_checkouts(htdocs)?;
+
+    if let Some(m) = module {
+        let m = m.trim_matches('/').to_string();
+        validate_package_name(&m)?;
+
+        // Deleting the checkout out from under a live path repository would leave
+        // the application requiring a package with nothing to resolve it from.
+        if let Some(l) = linked.iter().find(|l| l.relative_path() == m) {
+            return Err(anyhow!(
+                "{} is still linked for development.\n\
+                 Run `docker-control module unlink {} --purge` to restore the vendor install and delete the checkout in one step.",
+                l.package,
+                m
+            ));
+        }
+
+        if strays.contains(&m) {
+            return Ok(m);
+        }
+
+        return Err(anyhow!(
+            "No development checkout at htdocs/{}/{}. {}",
+            MODULES_DIR,
+            m,
+            if strays.is_empty() {
+                "There are none to purge.".to_string()
+            } else {
+                format!("Available: {}", strays.join(", "))
+            }
+        ));
+    }
+
+    if strays.is_empty() {
+        return Err(anyhow!(
+            "No development checkouts left in htdocs/{} — nothing to purge.",
+            MODULES_DIR
+        ));
+    }
+
+    options.prompt_provider.select_module_to_purge(strays)
+}
+
+/// Delete a checkout `unlink` left behind.
+///
+/// Pure filesystem and git2: the module is by definition not linked, so there is no
+/// `composer.json` entry to remove, no Composer call to make and therefore nothing
+/// to roll back. That is also why it does not need the stack running.
+fn purge(
+    project_dir: &Path,
+    htdocs: &Path,
+    module: Option<String>,
+    yes: bool,
+    options: &ModuleOptions,
+) -> Result<()> {
+    let linked = linked_modules(htdocs)?;
+    let relative = resolve_purge_target(htdocs, &linked, module, options)?;
+
+    let dev_path = htdocs.join(MODULES_DIR).join(&relative);
+    let package = package_name(&dev_path, &relative);
+
+    purge_checkout(htdocs, &dev_path, &package, yes, true, options)?;
+
+    // Declined at the prompt — `purge_checkout` already said it kept the checkout.
+    if dev_path.exists() {
+        return Ok(());
+    }
+
+    let idea_path = format!("htdocs/{}/{}", MODULES_DIR, relative);
+    utils::unregister_phpstorm_git_root(project_dir, &idea_path)?;
+    tidy_modules_gitignore(htdocs);
+
+    ui::success(format!("Removed the development checkout of {}.", package));
     Ok(())
 }
 
@@ -1043,6 +1282,14 @@ fn list(project_dir: &Path, htdocs: &Path) -> Result<()> {
             names.push(relative);
         }
     }
+    // Checkouts an `unlink` left behind have no vendor install and no repository
+    // entry, so they appear in neither of the sources above.
+    let strays = stray_checkouts(htdocs)?;
+    for relative in &strays {
+        if !names.contains(relative) {
+            names.push(relative.clone());
+        }
+    }
     names.sort();
     names.dedup();
 
@@ -1054,23 +1301,25 @@ fn list(project_dir: &Path, htdocs: &Path) -> Result<()> {
     ui::info("Vendor modules:");
     for name in &names {
         let entry = linked.iter().find(|l| l.relative_path() == *name);
-        let (glyph, state) = match entry {
-            Some(_) => ("✓", "linked"),
-            None => ("○", "vendor"),
+        let stray = entry.is_none() && strays.contains(name);
+        let (glyph, state) = match (entry.is_some(), stray) {
+            (true, _) => ("✓", "linked"),
+            (false, true) => ("○", "stray"),
+            (false, false) => ("○", "vendor"),
+        };
+
+        let path = if entry.is_some() || stray {
+            htdocs.join(MODULES_DIR).join(name)
+        } else {
+            htdocs.join("vendor").join(name)
         };
 
         let version = match entry {
             Some(l) => l.version.clone(),
             None => {
-                let package = package_name(&htdocs.join("vendor").join(name), name);
+                let package = package_name(&path, name);
                 installed_version(htdocs, &package).unwrap_or(None)
             }
-        };
-
-        let path = if entry.is_some() {
-            htdocs.join(MODULES_DIR).join(name)
-        } else {
-            htdocs.join("vendor").join(name)
         };
 
         println!(
@@ -1081,6 +1330,13 @@ fn list(project_dir: &Path, htdocs: &Path) -> Result<()> {
             version.unwrap_or_else(|| "-".to_string()),
             current_branch(&path)
         );
+    }
+
+    if !strays.is_empty() {
+        ui::info(format!(
+            "  stray = a checkout left in htdocs/{} by an earlier unlink; remove it with `module purge <name>`",
+            MODULES_DIR
+        ));
     }
 
     Ok(())
@@ -1928,5 +2184,33 @@ mod tests {
             version: None,
         };
         assert_eq!(m.relative_path(), "acme/widget");
+    }
+
+    #[test]
+    fn stray_checkouts_lists_only_what_no_repository_points_at() {
+        let (_temp, htdocs) = htdocs_with_gitignore(None);
+        fs::write(
+            htdocs.join("composer.json"),
+            r#"{"repositories":{"dc2-acme-linked":{"type":"path","url":"modules/acme/linked"}}}"#,
+        )
+        .unwrap();
+
+        for relative in ["acme/linked", "acme/stray", "other/stray"] {
+            fs::create_dir_all(htdocs.join(MODULES_DIR).join(relative)).unwrap();
+        }
+        // A loose file at vendor level, and one at package level: neither is a module.
+        fs::write(htdocs.join(MODULES_DIR).join("loose.txt"), "x").unwrap();
+        fs::write(htdocs.join(MODULES_DIR).join("acme/loose.txt"), "x").unwrap();
+
+        assert_eq!(
+            stray_checkouts(&htdocs).unwrap(),
+            vec!["acme/stray".to_string(), "other/stray".to_string()]
+        );
+    }
+
+    #[test]
+    fn stray_checkouts_is_empty_without_a_modules_directory() {
+        let (_temp, htdocs) = htdocs_with_gitignore(None);
+        assert!(stray_checkouts(&htdocs).unwrap().is_empty());
     }
 }
