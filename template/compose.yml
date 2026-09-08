@@ -108,6 +108,7 @@ services:
         # keep working. Compatibility shim — to be dropped once they have moved.
         aliases:
           - redis
+          - valkey
     deploy:
       restart_policy:
         condition: any
