@@ -301,7 +301,7 @@ Output is piped verbatim when stdout isn't a terminal (`console -- cat composer.
 writes the file unchanged), and a TTY is allocated when it is, so interactive commands such as
 `php -a` or a prompting `bin/console` generator still work.
 
-#### `module <create|link|unlink|list>`
+#### `module <create|link|unlink|purge|list>`
 Check a vendor module out for local development. Vendor modules are installed from source, so
 `htdocs/vendor/<vendor>/<name>/` is a real git clone — but anything edited there is discarded by
 the next `composer install`. `module link` moves the clone to `htdocs/modules/<vendor>/<name>/`
@@ -313,15 +313,19 @@ The path repository pins the version to whatever `composer.lock` already records
 package, via `options.versions`. Your `require` constraint is never touched, and there is no
 state file — the repository entry itself is the state.
 
-The project containers must be running: Composer runs inside the `php` container.
+The project containers must be running for `link`, `unlink` and `create`: Composer runs inside
+the `php` container. `list` and `purge` touch only the filesystem and work with the stack down.
 
 | Option | Description |
 |---|---|
 | `link [module]` | Link a module for development. Prompts when `module` is omitted. |
 | `--version <VER>` | Pin a specific version instead of the one from `composer.lock`. |
+| `-y, --yes` | Skip the confirmation prompt when a stale vendor copy has to be discarded. |
 | `unlink [module]` | Restore the module to a normal Composer install under `vendor/`. |
 | `--purge` | Also delete the development checkout from `htdocs/modules/`. |
 | `-y, --yes` | Skip the confirmation prompt when `--purge` finds unsaved work. |
+| `purge [module]` | Delete a development checkout `unlink` left behind. Prompts when `module` is omitted. |
+| `-y, --yes` | Skip the confirmation prompt. |
 | `list` | Show every vendor module and which are linked. Read-only; no containers needed. |
 | `create <module>` | Scaffold a **new** module and link it, for a module that doesn't exist yet. |
 | `--type <TYPE>` | Package type forwarded to `composer init` (default `library`). |
@@ -335,7 +339,25 @@ docker-control module link acme/widget --version 2.4.x-dev
 docker-control module link acme/widget -- -W --no-scripts   # extra composer update args
 docker-control module unlink acme/widget
 docker-control module unlink acme/widget --purge
+docker-control module purge acme/widget                     # delete a checkout left behind
 ```
+
+##### Unlinking, re-linking, and `purge`
+
+`unlink` without `--purge` keeps the development checkout in `htdocs/modules/`, because that
+checkout is your work — it is the one thing Composer cannot reproduce. Two things follow from
+that, and both are handled for you.
+
+**Re-linking picks the checkout back up.** `unlink` ends with `composer update --prefer-source`,
+which reinstalls a normal clone under `vendor/`, so afterwards the module exists in both places.
+Running `link` again keeps the copy in `modules/` and discards the one in `vendor/`, which
+Composer can always reinstall. If that vendor copy holds something git does not — uncommitted
+changes, or commits that exist on no remote — you are told what, and asked before it goes.
+
+**`purge` removes a checkout you are done with.** `module list` shows leftover checkouts as
+`stray`; `module purge <module>` deletes one. It reports anything that exists only there before
+asking, and it refuses a module that is still linked — use `unlink --purge` for that, which
+restores the vendor install and deletes the checkout in one step.
 
 ##### `create` — a module that doesn't exist yet
 

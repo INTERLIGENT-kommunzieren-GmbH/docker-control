@@ -114,6 +114,7 @@ dc2 module list                  # which vendor modules exist, and which are lin
 dc2 module create acme/widget    # scaffold a NEW module and link it (composer init runs interactively)
 dc2 module link acme/widget      # move an existing one to htdocs/modules/ and symlink it into vendor/
 dc2 module unlink acme/widget    # restore the normal vendor install
+dc2 module purge acme/widget     # delete a checkout a previous unlink left in htdocs/modules/
 ```
 
 Vendor modules are source installs, so `htdocs/vendor/<vendor>/<name>/` is a real git clone —
@@ -125,6 +126,12 @@ into `vendor/`, so edits survive. The module's git history stays usable, includi
 ⚠️ `module link` edits `composer.json` and `composer.lock`, which are **tracked** files. Do not
 commit the link: `dc2 deploy` and `dc2 release` build from the committed tree, where `modules/`
 does not exist. Run `dc2 module unlink` before committing.
+
+`dc2 module unlink` keeps the checkout in `htdocs/modules/` — it is your work, and the one thing
+Composer cannot reproduce. Linking again picks that checkout back up and discards the copy
+Composer reinstalled under `vendor/` (asking first if it holds uncommitted or unpushed work).
+`dc2 module list` shows a leftover checkout as `stray`, and `dc2 module purge <module>` deletes
+one once you are done with it.
 
 `dc2 module create` is for a module that does not exist yet: it scaffolds `src/`, runs `git init` on
 `main`, runs `composer init` interactively, adds a PSR-4 mapping, and wires the same path repository
