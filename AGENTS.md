@@ -1,45 +1,154 @@
-# Repository Guidelines
+# AGENTS.md
 
-## Project Structure & Module Organization
-This CLI tool is organized into functional modules under `src/`, following a clean separation of concerns:
+The single guidance file for coding agents working in this repository — Claude Code and
+anything else that reads `AGENTS.md`. `CLAUDE.md` is a one-line pointer here; put new
+guidance in this file, never there.
 
-- **CLI Entry Point**: `src/main.rs` uses `clap` for command parsing and routing.
-- **Command Implementation**: `src/commands/` contains individual modules for each CLI subcommand (e.g., `deploy.rs`, `merge.rs`, `init.rs`).
-- **Core Wrappers**:
-  - `src/docker/`: Handles container management via `bollard`.
-  - `src/git/`: Manages repository operations using `git2`.
-  - `src/ssh/`: Handles SSH agent forwarding and connectivity.
-- **Support Modules**:
-  - `src/config/`: Manages deployment configuration (primarily `.deploy.json`).
-  - `src/ui/`: Provides interactive prompts and terminal output styling.
-  - `src/utils/`: Contains platform-specific logic and dependency checks.
-  - `src/assets/`: Manages embedded resources like the project template in `dist/template/`.
+(Not to be confused with `template/CLAUDE.md`, which ships *inside* generated projects and
+is unrelated to working on this repo.)
 
-## Build, Test, and Development Commands
-The project uses standard Cargo commands for development:
+## Commands
 
-- **Build**: `cargo build`
-- **Release Build**: `cargo build --release`
-- **Run**: `cargo run -- [args]` (e.g., `cargo run -- init`)
-- **Test**: `cargo nextest run`
-- **Single Test**: `cargo nextest run <test_substring>`
-- **Lint**: `cargo clippy`
-- **Format**: `cargo fmt`
-- **Fix Lints**: `cargo fix --allow-dirty`
+```bash
+cargo build                        # debug build
+cargo build --release              # release build
+cargo run -- <args>                # run (e.g. cargo run -- init)
+cargo nextest run                  # run all tests (must use nextest, not cargo test)
+cargo nextest run <test_substring> # run a single test by substring match
+cargo clippy                       # lint
+cargo fmt                          # format
+cargo fix --allow-dirty            # auto-fix lint warnings
+```
 
-## Coding Style & Naming Conventions
-- **Rust Edition**: 2024.
-- **Formatting**: Enforced by `rustfmt`. Use `cargo fmt` before committing.
-- **Linter**: `clippy` is used for code quality. Some specific lints like `clippy::collapsible_if` are allowed in certain contexts.
-- **Error Handling**: Uses `anyhow` for flexible error propagation.
+## Coding style & conventions
 
-## Testing Guidelines
-- **Framework**: `cargo-nextest` (Standard Rust tests executed via `cargo nextest run`).
-- **Utilities**: Uses `tempfile` for file system isolation during tests.
-- **Test Locations**: Includes both unit tests within modules and integration tests in `tests/`.
+- **Rust edition 2024.** Formatting is `rustfmt`'s — run `cargo fmt` before committing; `cargo clippy` must be clean.
+- `#[allow(clippy::collapsible_if)]` is intentionally set at crate level.
+- **Errors** use `anyhow` for propagation (`Result<T>` + `anyhow!`/`context`); a command's `execute()` returns `anyhow::Result<()>`. The one deliberate exception is `console_exec`, which returns the container command's exit code instead — see below.
+- **User-facing output** goes through `src/ui/` (`info`, `warning`, `critical`, `success`, `debug`), not `println!`.
+- **Editing a project's `composer.json` is done with `composer config`, never `serde_json`** — serialising it back would reflow the whole file. Writing a `composer.json` we generated ourselves seconds earlier is the only exception.
 
-## Commit & Pull Request Guidelines
-Commit history follows a pattern of clear, descriptive messages:
-- **Releases**: Tagged with semantic versioning (e.g., `2.1.9`).
-- **Features/Fixes**: Summarize the change (e.g., `enhanced deploy hooks`, `bugfixes for migration`).
-- **Merge Logic**: The `merge` command automates a selective cherry-pick workflow, excluding "release:" prefixed commits.
+## Architecture
+
+This is a Rust 2024-edition CLI tool (`docker-control`) that manages Docker-based PHP projects. It acts as both a standalone binary and a Docker CLI plugin (`docker control`).
+
+### Startup flow (`src/main.rs`)
+
+SSH agent lifecycle (start/stop/restart) is handled before the async runtime starts — those flags are intercepted from raw `args` before clap parsing. For all other commands, a Tokio runtime is created and `async_main` runs. On startup it:
+1. Checks external tool dependencies (`utils::dependencies`)
+2. Detects platform (`utils::platform`)
+3. Auto-starts the SSH agent daemon if not already running on port 2222
+4. Initialises embedded assets (`assets::AssetManager`)
+
+Several of those pre-clap steps scan raw `args` for docker-control's own flags. They must scan `commands::custom::args_before_separator(&args)`, never the full argv: tokens after a standalone `--` belong to the command `console -- <cmd>` runs in the container (or to a custom script), so a file-wide scan silently steals them — `console -- php --version` printed docker-control's version, `console -- foo --stop-ssh-agent` stopped the agent. `--version`/`-V` is narrower still: it counts only as the *leading* token (via `split_leading_subcommand`, as `is_help` does), because anywhere later it is a subcommand's own argument — `module link <m> --version <v>`. The full argv stays available for the custom-script dispatch, which has to forward everything the user typed.
+
+### Module responsibilities
+
+| Module | Purpose |
+|---|---|
+| `src/commands/` | One file per subcommand; each exposes an `execute()` function |
+| `src/docker/mod.rs` | Wraps `docker compose` via `std::process::Command`; `bollard` is used for container introspection only |
+| `src/docker/ingress_state.rs` | Fingerprints the ingress assets and stamps what the running proxy was started from |
+| `src/git/mod.rs` | `GitService` wraps `git2`; handles branches, tags, worktrees, cherry-pick, push |
+| `src/ssh/mod.rs` | `exec_ssh` / `copy_ssh` helpers used by deploy |
+| `src/config/mod.rs` | Loads/saves `.deploy.json`; config file search order: `htdocs/.docker-control/.deploy.json` → `.deploy.json` |
+| `src/assets/mod.rs` | `template/` and `ingress/` directories are compiled into the binary via `include_dir!` and extracted to the OS config dir on first run (or when version changes) |
+| `src/template/mod.rs` | Tracks which template a project is synced to (`.docker-control/state.json`); three-way classification of template changes |
+| `src/ui/mod.rs` | Terminal output helpers: `info`, `warning`, `critical`, `success`, `debug` |
+| `src/utils/` | Platform detection, SSH agent forwarding, dependency checks, `is_managed()` |
+
+### Key domain concepts
+
+**Managed projects** — Most commands require a `.managed-by-docker-control` (or `.managed-by-docker-control-plugin`) sentinel file in the project directory. `utils::is_managed()` checks this.
+
+**Project layout** — The tool expects web app source at `htdocs/` (a separate git repo), vendor modules at `htdocs/vendor/<name>/`, and config at `htdocs/.docker-control/`. Note the two same-named directories: `htdocs/.docker-control/` is app-level config (deploy config, control/deployment scripts) in the app repo, while `<project>/.docker-control/` holds docker-control's own state for the wrapper project.
+
+**Template state** (`template/mod.rs`) — `init`/`update`/`migrate` record the *template's* file hashes in `<project>/.docker-control/state.json`. That is a merge base, so `base` (recorded) vs `theirs` (template now) vs `mine` (project now) classifies each file exactly: unchanged upstream → silent regardless of local edits; changed upstream only → safe to apply; changed on both sides → conflict. Version numbers are deliberately *not* the trigger — the template changes in roughly one release in five, so a version bump says nothing about whether anything needs applying. A `template_fingerprint` over the whole manifest is the fast path. `.env-dist`/`.gitignore-dist` are excluded from hashing (their project copy is renamed/consumed, so a missing copy is indistinguishable from a missing base) and checked by content against `.env`/`.gitignore` instead; `secrets/*.txt` and `config/htpasswd` are seeded once and never compared.
+
+**Development modules** (`commands/module.rs`) — `module create` scaffolds a module that does not exist yet (`src/` + PSR-4, `git init` on `main`, `composer init` run *interactively* via `docker::exec_interactive`, initial commit) and then wires it exactly as `link` does, pinned `dev-main`. The one asymmetry: `create` also runs `composer require`, which `link` deliberately never does — nothing requires a brand-new module, so `vendor/<vendor>/<name>` would never appear without it. Consequences that are easy to get wrong: the path repository still must not be committed while the `require` eventually must, so `create`'s rollback restores the *application* but keeps the checkout (the opposite of `rollback_link`, because those files are the developer's work and Composer cannot reproduce them); and `unlink` refuses a checkout with no git remote, since its closing `composer update` would have nothing to resolve the package from once the path entry is gone. `create` validates the package name before creating anything, and writes the module's *own* `composer.json` with `serde_json` — allowed only because that file was generated seconds earlier by us, unlike the application's.
+
+`module link` moves a source-installed module from `htdocs/vendor/<vendor>/<name>` to `htdocs/modules/<vendor>/<name>` and wires a Composer `path` repository (`symlink: true`, version pinned via `options.versions` to whatever `composer.lock` already records) so `vendor/` becomes a symlink to the checkout. The repo entry *is* the state — there is no state file — and `require` is never edited. Three non-obvious constraints: the entry must be **prepended** (appended, it loses priority to a private `composer` repo in the same file and Composer exits 0 having re-cloned upstream, so `link` asserts the symlink afterwards); `composer config` does the `composer.json` writes, because `serde_json::to_string_pretty` would reflow the whole file; and `unlink` deletes the `vendor/` symlink *before* calling Composer, which otherwise follows it into a dirty worktree and aborts after already rewriting the lock. Modules live under `htdocs/` because `./htdocs:/var/www/html` is the only application mount.
+
+⚠️ **`COMPOSER_HOME` under `docker compose exec`** — `/var/www/.bashrc` sets `COMPOSER_HOME`, and `.bashrc` is only read by *interactive* shells, so it applies to `console` but not to a non-interactive `exec`. What the variable falls back to is image-tag dependent (unset on `8.2-debug`, so it resolves to `$HOME/.composer`; `/composer` on `8.5-slim-debug`), and only `/var/www/.composer` has `config/composer.config.json` with the private repositories mounted into it. Any `exec`-based Composer call must therefore pass `-e COMPOSER_HOME=/var/www/.composer` — see `docker::exec_as_user`, and `docker::console_exec_flags` for the same reason applied to `console -- <cmd>`.
+
+**`console` vs `console_exec`** (`docker/mod.rs`) — `console` opens an interactive `bash`; `console -- <cmd>` goes through `console_exec` instead. The split is deliberate: the one-shot path has to re-state as flags what the interactive shell gets from the image and `/var/www/.bashrc` (`-u www-data`, `-w /var/www/html`, `COMPOSER_HOME`), and it returns the container command's exit code for `main` to `process::exit` with, rather than an `anyhow::Result` that would print an `Error:` line over a failure the inner command already reported. The `--` separator is enforced by clap's `last = true`, not by hand-parsing argv, so `console ls -la` is a parse error rather than a guess about whether `ls` is a service.
+
+**Release workflow** (`commands/release.rs`) — Uses git worktrees under `releases/` to keep release preparation isolated. Increments semver from existing branches/tags, updates `composer.json`, runs `composer install` inside a Docker container (`fduarte42/docker-php:<PHP_VERSION>`), commits `composer.lock`, then pushes the branch. Patch releases create a tag; major/minor create a new `X.Y.x` branch.
+
+**Merge workflow** (`commands/merge.rs`) — Creates a `<release_branch>-merge` branch in a worktree under `releases/`, then cherry-picks commits from the release branch to primary, skipping commits with a `release:` prefix. Handles interactive conflict resolution and pushes the merge branch for a PR.
+
+**Deploy workflow** (`commands/deploy.rs`) — Checks out the selected tag via `git2` into a temp dir, runs `composer install` in Docker, compresses with `7z`, uploads via `scp`, extracts on the server, handles shared directories/files via symlinks, runs Doctrine migrations, flips the `current` symlink, and manages maintenance mode. Supports Rhai hook scripts (`pre_deploy`, `post_deploy`, `done_deploy`) loaded from `htdocs/.docker-control/deployment-scripts/<env>.rhai`.
+
+**SSH agent daemon** — Runs as a separate daemonized process on port 2222 (`SSH_AGENT_PORT`), forwarding the host SSH agent into Docker containers. Automatically started when missing. Controlled via `--start-ssh-agent` / `--stop-ssh-agent` / `--restart-ssh-agent` flags.
+
+**Ingress** — A separate Docker compose stack for the reverse proxy. Located relative to the binary (`../share/docker-control/ingress/`), via `DOCKER_CONTROL_INGRESS_DIR`, or the embedded assets.
+
+The containers bind-mount `$HOMEBREW_PREFIX/etc/docker-control/ingress/volumes/...` and never the keg, so an upgrade doesn't break a running proxy — it just leaves it serving the old `compose.yml` and old volumes, since only `ensure_ingress_volumes` (gated on `up`) re-seeds `etc/` from the new `share/`. `ingress_state` therefore stamps a *content* fingerprint of the ingress directory at every `up`, and `start`/`restart`/`status`/`status-ingress` offer to cycle a proxy whose stamp no longer matches. Three things here are deliberate and easy to undo by accident:
+
+- **A fingerprint, not a version.** `ingress/` is three files and changes in maybe one release in ten, so stamping `CARGO_PKG_VERSION` would prompt for a proxy restart after every upgrade while changing nothing — the same argument the template state makes. A missing or unparseable stamp is "unknown", never "stale": nothing but a `start-ingress` can clear it, so reporting it would nag forever.
+- **None of this can live in the Homebrew formula.** A formula's only hook is `post_install`, which runs *after* the new keg is linked (so it can never stop the proxy first) and runs sandboxed with `deny_read_home` + `deny_all_network` (so it can reach neither the Docker socket nor the `~/.docker` context). `preflight`/`uninstall_preflight` would give exactly the wanted semantics but are cask-only, and casks are macOS-only while `is_brew_eligible` covers native Linux too. `brew upgrade` also has no service-restart logic, so a `service` block buys nothing. Hence the notice-on-next-run design, which additionally covers `brew install`, `brew postinstall` and a hand-swapped binary.
+- **`upgrade` starts the ingress by spawning the newly installed binary**, not in-process. `find_ingress_dir` resolves assets from the canonicalised `current_exe()`, and after `brew upgrade` returns this process is still the *old* keg — in-process it would re-seed `etc/.../volumes` from the old `share/` and start the old `compose.yml`, i.e. reintroduce the exact staleness being cleared. The failed-upgrade path is the opposite and restores in-process on purpose, because there the keg didn't change.
+
+`ensure_ingress_volumes` creates its target directory even with no source to copy: Docker auto-creates a missing bind-mount source **as root**, which leaves `etc/docker-control/ingress` unwritable for every later run (including the stamp). Homebrew installs always have the source; a source build using `DOCKER_CONTROL_INGRESS_DIR` does not.
+
+**Custom commands** — Shell scripts in `control-scripts/` or `htdocs/.docker-control/control-scripts/` are dispatched as external subcommands.
+
+**`doctor` and the container ACL** (`commands/doctor.rs`, `utils/acl.rs`) — the ACL applied to the project is a POSIX *named-user* entry (`setfacl -m u:33:rwX`, uid 33 = `www-data`). The kernel consults a named-user entry only for processes that are **not** the file's owner; for the owner the `user::` bits win. So read-only files that `www-data` itself owns (git writes its objects `0444` — vendor `.git/objects`, the Composer cache) can never be made writable by re-running `setfacl`, and a naive "everything must be writable" check would re-report them forever as "permission problems remain after --fix". `find_inaccessible_paths` therefore flags only what the ACL actually governs: unreadable paths (excluding broken symlinks, since `find ! -readable` follows a dead target), unwritable **directories**, and unwritable files **not** owned by `www-data`. The full reasoning is in the doc comment above that function — read it before widening the predicate.
+
+### Testing patterns
+
+Unit tests live beside the code they cover; integration tests live in `tests/`. Both run under `cargo-nextest`, and use `tempfile` for filesystem isolation.
+
+Interactive prompt dependencies (`inquire`) are abstracted behind trait objects (`PromptProvider`, `MergePromptProvider`) so tests can inject a mock implementation. SSH calls in `deploy.rs` are mocked via a `thread_local! MOCK_SSH_COMMANDS` that is swapped in during `#[cfg(test)]`. Integration tests live in `tests/` and use `tempfile` for filesystem isolation.
+
+### Environment variables respected at runtime
+
+| Variable | Effect |
+|---|---|
+| `DOCKER_CONTROL_SKIP_DEPENDENCY_CHECK` | Skip external tool checks |
+| `DOCKER_CONTROL_SKIP_SSH_AGENT` | Skip SSH agent management |
+| `DOCKER_CONTROL_INGRESS_DIR` | Override ingress directory path |
+| `SSH_AUTH_PORT` | Set automatically to `<bind_ip>:2222`; read by deploy/release Docker commands |
+| `PHP_VERSION` | Read from project `.env`; used for the `fduarte42/docker-php` image tag |
+
+## Documentation
+
+| File | What it is | Who maintains it |
+|---|---|---|
+| `README.md` | Install + orientation for the repo | by hand |
+| `USER-MANUAL.md` | The full end-user manual (~50 KB, hand-written TOC) | by hand |
+| `USER-MANUAL.pdf` | Generated from `USER-MANUAL.md`, **committed** | generated — see below |
+| `CHANGELOG.md` | Release notes | by hand, per release |
+| `MIGRATION.md` | Upgrade notes from the pre-Rust bash tool | rarely |
+| `AGENTS.md` | **This file** — the only agent-guidance file; `CLAUDE.md` just points at it | by hand |
+| `docs/*.md` | Design plans for individual features, kept as history | frozen once implemented |
+
+**Standing rule: a change that touches `USER-MANUAL.md` must regenerate `USER-MANUAL.pdf` in the same change.** Nothing in CI or `build.sh` builds the PDF — it only stays current because the change that edits the manual also rebuilds it. A `CHANGELOG.md` edit is the signal that user-facing behaviour moved: re-read the manual, fix it if it is now wrong, then rebuild.
+
+```bash
+.claude/skills/user-manual-pdf/build-pdf.sh           # rebuild in place (no-op if content is unchanged)
+.claude/skills/user-manual-pdf/build-pdf.sh --check   # is the committed PDF stale? exit 2 = yes
+```
+
+The toolchain (pandoc + WeasyPrint in a cached venv outside the repo), the mandatory `+gfm_auto_identifiers` flag, and how to read the build's text diff are documented in `.claude/skills/user-manual-pdf/SKILL.md`.
+
+## Commit & pull requests
+
+- Commit messages are short and descriptive, lower-case, no conventional-commit prefixes (`enhanced deploy hooks`, `bugfixes for migration`).
+- **Release commits are prefixed `release:`** and are meaningful to tooling, not just to readers: `merge` cherry-picks from a release branch back to primary and deliberately *skips* every `release:` commit. Don't use that prefix for anything else.
+- Release commits/tags are plain semver (`2.7.2`); patch releases get a tag, major/minor get an `X.Y.x` branch. `commands/release.rs` produces them — don't hand-roll one.
+- Commit or push only when asked.
+
+## Claude Code setup in this repo
+
+`.claude/` is committed and is part of the project — treat it like source.
+
+| Path | Purpose |
+|---|---|
+| `.claude/skills/user-manual-pdf/` | Skill: rebuild `USER-MANUAL.pdf`; owns `build-pdf.sh` |
+| `.claude/hooks/user-manual-changed.sh` | `PostToolUse` — after an edit to `USER-MANUAL.md`, injects a reminder to rebuild |
+| `.claude/hooks/user-manual-pdf-guard.sh` | `Stop` — refuses to end a turn while `USER-MANUAL.md` is newer than `USER-MANUAL.pdf` |
+| `.claude/settings.json` | Wires those hooks up; committed |
+| `.claude/settings.local.json` | Per-developer permission allowlist; **not** committed |
+
+Both hooks use mtime ordering (`USER-MANUAL.md` newer than `USER-MANUAL.pdf`) as their trigger, which is why `build-pdf.sh` `touch`es the PDF even when the rebuild produces identical content — a no-op build that left the PDF older would make the `Stop` hook fire forever. The `Stop` hook also bails out when `stop_hook_active` is already true, the other way that guard could loop. mtime is only meaningful inside a working session; to judge whether the *committed* PDF is stale (after a clone or a merge) use `--check`, which compares extracted text, not timestamps.

@@ -8,3 +8,8 @@
 
 # Reference copy of the pre-Rust bash tool; kept locally, never committed
 /old_template/
+
+# Per-developer Claude Code state; the rest of .claude/ (skills, hooks,
+# settings.json) is committed on purpose.
+/.claude/settings.local.json
+/.claude/scheduled_tasks.lock
