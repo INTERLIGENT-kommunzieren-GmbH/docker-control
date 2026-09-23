@@ -65,8 +65,7 @@ pub async fn execute(project_dir: &Path) -> Result<()> {
 
     let sanitized_name = sanitize_name(&project_name);
 
-    let php_versions = vec!["7.4", "7.4-oci", "8.2", "8.2-oci", "8.5", "8.5-oci"];
-    let php_version = Select::new("PHP Version", php_versions).prompt()?;
+    let php_version = Select::new("PHP Version", crate::utils::ALLOWED_PHP_VERSIONS.to_vec()).prompt()?;
 
     // Find free port for DB
     let db_port = find_free_port(33060, 33099)?;

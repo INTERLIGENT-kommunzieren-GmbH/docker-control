@@ -225,6 +225,10 @@ async fn create_deployment_archive(
 
     // Run composer install inside a container for parity with bash
     let php_version = get_env_var(project_dir, "PHP_VERSION").unwrap_or_else(|| "8.2".to_string());
+    
+    // Validate PHP version against allowlist to prevent execution of arbitrary Docker images
+    crate::utils::validate_php_version(&php_version)?;
+    
     let ssh_auth_port = std::env::var("SSH_AUTH_PORT")
         .ok()
         .or_else(|| get_env_var(project_dir, "SSH_AUTH_PORT"))
