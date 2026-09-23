@@ -23,6 +23,9 @@ pub fn execute(project_dir: &Path) -> Result<()> {
         .with_default(&default_domain)
         .prompt()?;
 
+    // Validate user and domain to prevent SSH option injection
+    crate::config::validate_ssh_destination(&user, &domain, &env_name)?;
+
     let service_root = Text::new("Server root:")
         .with_default("/var/www/html")
         .prompt()?;
