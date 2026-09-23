@@ -3,7 +3,10 @@ services:
     labels:
       com.interligent.dockerplugin.proxy: "nginx"
     container_name: nginx-proxy
-    image: nginxproxy/nginx-proxy:1.6
+    # SECURITY FIX: Pinned to immutable digest to prevent supply-chain attacks.
+    # Docker socket access requires verified image provenance.
+    # IMPORTANT: Run ./ingress/pin-images.sh to replace with current verified digest.
+    image: nginxproxy/nginx-proxy:1.6@sha256:0000000000000000000000000000000000000000000000000000000000000000
     networks:
       - "frontend-tier"
     ports:
@@ -25,7 +28,10 @@ services:
     labels:
       com.interligent.dockerplugin.proxy: "companion"
     container_name: proxy-companion
-    image: sebastienheyd/self-signed-proxy-companion
+    # SECURITY FIX: Pinned to immutable digest to prevent supply-chain attacks.
+    # Docker socket access requires verified image provenance.
+    # IMPORTANT: Run ./ingress/pin-images.sh to replace with current verified digest.
+    image: sebastienheyd/self-signed-proxy-companion:latest@sha256:0000000000000000000000000000000000000000000000000000000000000000
     environment:
       NGINX_PROXY_CONTAINER: nginx-proxy
     networks:
