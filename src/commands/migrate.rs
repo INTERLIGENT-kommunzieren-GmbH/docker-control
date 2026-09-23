@@ -100,7 +100,30 @@ pub async fn execute(project_dir: &Path) -> Result<()> {
     let backup_dir = project_dir.join(&backup_name);
 
     ui::info(format!("Creating backup in {}...", backup_name));
+    
+    // Security: Reject pre-existing symlinks at the backup path to prevent an attacker
+    // from redirecting the privileged rsync to an arbitrary location.
+    if backup_dir.exists() {
+        let metadata = fs::symlink_metadata(&backup_dir)?;
+        if metadata.file_type().is_symlink() {
+            return Err(anyhow!(
+                "Backup path {} already exists as a symlink. Migration aborted for security reasons.",
+                backup_name
+            ));
+        }
+    }
+    
     fs::create_dir_all(&backup_dir)?;
+    
+    // Verify the created path is a real directory, not a symlink that was followed.
+    let metadata = fs::symlink_metadata(&backup_dir)?;
+    if metadata.file_type().is_symlink() {
+        return Err(anyhow!(
+            "Backup path {} is a symlink after creation. Migration aborted for security reasons.",
+            backup_name
+        ));
+    }
+    
     utils::exclude_from_phpstorm(project_dir, &backup_name)?;
 
     // We use rsync with sudo to keep permissions and owner info
