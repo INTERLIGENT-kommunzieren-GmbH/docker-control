@@ -1,7 +1,8 @@
 use crate::ui;
 use crate::utils::is_managed;
-use anyhow::{Result, anyhow};
+use anyhow::{Context, Result, anyhow};
 use inquire::{Confirm, Select, Text};
+use rand::Rng;
 use std::fs;
 use std::net::TcpListener;
 use std::path::Path;
@@ -32,6 +33,13 @@ pub async fn execute(project_dir: &Path) -> Result<()> {
 
     // Copy template files
     copy_dir_contents(&template_dir, project_dir)?;
+
+    // Generate unique database passwords to replace the template's placeholder values.
+    // The template ships with known credentials ("123456") that would otherwise be
+    // reused across all initialized projects. Since compose.yml publishes the database
+    // port to the host, an attacker who can reach that port could authenticate with
+    // the known credential, bypassing application-level authentication.
+    generate_db_passwords(project_dir)?;
 
     // Record the template this project starts from, so later runs can tell
     // whether the template has actually moved rather than just guessing from
@@ -154,4 +162,38 @@ fn find_free_port(start: u16, end: u16) -> Result<u16> {
         }
     }
     Err(anyhow!("No free ports found in range {}-{}", start, end))
+}
+
+/// Generates cryptographically secure random passwords for database credentials.
+/// Replaces the template's placeholder passwords with unique values to prevent
+/// credential reuse across projects.
+fn generate_db_passwords(project_dir: &Path) -> Result<()> {
+    let secrets_dir = project_dir.join("secrets");
+    
+    // Generate a 32-character alphanumeric password for the application database user
+    let db_password = generate_secure_password(32);
+    let db_pw_file = secrets_dir.join("db_pw.txt");
+    fs::write(&db_pw_file, &db_password)
+        .with_context(|| format!("Failed to write database password to {:?}", db_pw_file))?;
+    
+    // Generate a 32-character alphanumeric password for the database root user
+    let db_root_password = generate_secure_password(32);
+    let db_root_pw_file = secrets_dir.join("db_root_pw.txt");
+    fs::write(&db_root_pw_file, &db_root_password)
+        .with_context(|| format!("Failed to write database root password to {:?}", db_root_pw_file))?;
+    
+    ui::success("Generated unique database credentials.");
+    Ok(())
+}
+
+/// Generates a cryptographically secure random alphanumeric password of the specified length.
+fn generate_secure_password(length: usize) -> String {
+    const CHARSET: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
+    let mut rng = rand::thread_rng();
+    (0..length)
+        .map(|_| {
+            let idx = rng.gen_range(0..CHARSET.len());
+            CHARSET[idx] as char
+        })
+        .collect()
 }
