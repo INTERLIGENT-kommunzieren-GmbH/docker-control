@@ -4,8 +4,9 @@
 //! git2's `certificate_check` callback discards libgit2's own known_hosts verdict
 //! (the `valid` argument is dropped in the Rust binding), so to implement
 //! trust-on-first-use we read `~/.ssh/known_hosts` ourselves to classify a
-//! presented key as [`HostKeyStatus::Match`], [`HostKeyStatus::Changed`] or
-//! [`HostKeyStatus::Unknown`], and append accepted keys back to the file.
+//! presented key as [`HostKeyStatus::Match`], [`HostKeyStatus::Changed`],
+//! [`HostKeyStatus::Revoked`], or [`HostKeyStatus::Unknown`], and append
+//! accepted keys back to the file.
 //!
 //! Both plain (`host keytype base64key`) and hashed (`|1|salt|hash`) host
 //! patterns are supported, matching what OpenSSH writes by default.
@@ -30,11 +31,14 @@ pub enum HostKeyStatus {
     Changed,
     /// The host is not in any known_hosts file (offer trust-on-first-use).
     Unknown,
+    /// The presented key matches an explicitly revoked entry.
+    Revoked,
 }
 
 enum LineMatch {
     Match,
     Changed,
+    Revoked,
 }
 
 fn home_dir() -> Option<PathBuf> {
@@ -75,6 +79,7 @@ pub fn check(host: &str, key_type: &str, raw_key: &[u8]) -> HostKeyStatus {
             match classify_line(line, host, key_type, raw_key) {
                 Some(LineMatch::Match) => return HostKeyStatus::Match,
                 Some(LineMatch::Changed) => changed = true,
+                Some(LineMatch::Revoked) => return HostKeyStatus::Revoked,
                 None => {}
             }
         }
@@ -123,8 +128,12 @@ fn classify_line(line: &str, host: &str, key_type: &str, raw_key: &[u8]) -> Opti
 
     let mut fields = line.split_whitespace();
     let mut patterns = fields.next()?;
-    // Skip an optional @cert-authority / @revoked marker.
+    let mut is_revoked = false;
+    // Check for @revoked or @cert-authority markers.
     if patterns.starts_with('@') {
+        if patterns == "@revoked" {
+            is_revoked = true;
+        }
         patterns = fields.next()?;
     }
     let entry_type = fields.next()?;
@@ -138,7 +147,13 @@ fn classify_line(line: &str, host: &str, key_type: &str, raw_key: &[u8]) -> Opti
     }
 
     match STANDARD.decode(entry_key) {
-        Ok(bytes) if bytes == raw_key => Some(LineMatch::Match),
+        Ok(bytes) if bytes == raw_key => {
+            if is_revoked {
+                Some(LineMatch::Revoked)
+            } else {
+                Some(LineMatch::Match)
+            }
+        }
         Ok(_) => Some(LineMatch::Changed),
         Err(_) => None,
     }
@@ -276,6 +291,22 @@ mod tests {
         assert!(matches!(
             classify_line(&marked, "example.com", "ssh-ed25519", key),
             Some(LineMatch::Match)
+        ));
+    }
+
+    #[test]
+    fn classify_detects_revoked_keys() {
+        let key = b"revoked-key-bytes";
+        let b64 = STANDARD.encode(key);
+        let revoked_line = format!("@revoked example.com ssh-ed25519 {b64}");
+        assert!(matches!(
+            classify_line(&revoked_line, "example.com", "ssh-ed25519", key),
+            Some(LineMatch::Revoked)
+        ));
+        // Different key on a revoked line is still Changed, not Revoked
+        assert!(matches!(
+            classify_line(&revoked_line, "example.com", "ssh-ed25519", b"different"),
+            Some(LineMatch::Changed)
         ));
     }
 
