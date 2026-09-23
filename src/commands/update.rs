@@ -514,6 +514,11 @@ fn write_sidecar(template_dir: &Path, project_dir: &Path, path: &str) -> Result<
     let source = template_dir.join(path);
     let target = project_dir.join(format!("{}.dist", path));
 
+    // Validate the target path before any file operations to prevent symlink attacks.
+    // Check that the destination and all its parent directories are not symlinks,
+    // and that the final resolved path stays within the project directory.
+    validate_sidecar_target(project_dir, &target)?;
+
     if fs::copy(&source, &target).is_ok() {
         return Ok(());
     }
@@ -525,6 +530,84 @@ fn write_sidecar(template_dir: &Path, project_dir: &Path, path: &str) -> Result<
     let owner = unsafe { format!("{}:{}", libc::getuid(), libc::getgid()) };
     utils::sudo::run(&["chown", &owner, &target_arg])
         .with_context(|| format!("Failed to take ownership of {:?}", target))
+}
+
+/// Validates that a sidecar destination is safe to write to, rejecting symlinks
+/// and paths that escape the project directory. This prevents privilege escalation
+/// via symlink attacks where a malicious `.dist` destination could point outside
+/// the managed project and be overwritten by the privileged fallback in `write_sidecar`.
+fn validate_sidecar_target(project_dir: &Path, target: &Path) -> Result<()> {
+    // Reject if the target itself already exists as a symlink.
+    if let Ok(metadata) = fs::symlink_metadata(target) {
+        if metadata.is_symlink() {
+            bail!(
+                "Refusing to write to {:?}: destination is a symlink. \
+                 Remove the symlink and retry the update.",
+                target
+            );
+        }
+    }
+
+    // Walk up from the target to the project root, checking each component.
+    // Any symlink in the path could redirect the write outside the project.
+    let mut current = target;
+    while let Some(parent) = current.parent() {
+        if parent == project_dir {
+            break;
+        }
+        if let Ok(metadata) = fs::symlink_metadata(parent) {
+            if metadata.is_symlink() {
+                bail!(
+                    "Refusing to write to {:?}: parent directory {:?} is a symlink. \
+                     Remove the symlink and retry the update.",
+                    target,
+                    parent
+                );
+            }
+        }
+        current = parent;
+        // Guard against infinite loops if parent resolution fails unexpectedly.
+        if current == Path::new("/") || current == Path::new("") {
+            break;
+        }
+    }
+
+    // Canonicalize both paths to resolve any remaining indirection and verify
+    // containment. If the target doesn't exist yet, canonicalize its parent
+    // and reconstruct the full path for comparison.
+    let canonical_project = project_dir
+        .canonicalize()
+        .with_context(|| format!("Failed to canonicalize project directory {:?}", project_dir))?;
+
+    let canonical_target = if target.exists() {
+        target.canonicalize().with_context(|| {
+            format!("Failed to canonicalize target {:?}", target)
+        })?
+    } else {
+        // Target doesn't exist yet; canonicalize its parent and append the filename.
+        let parent = target.parent().ok_or_else(|| {
+            anyhow!("Target {:?} has no parent directory", target)
+        })?;
+        let filename = target.file_name().ok_or_else(|| {
+            anyhow!("Target {:?} has no filename component", target)
+        })?;
+        let canonical_parent = parent.canonicalize().with_context(|| {
+            format!("Failed to canonicalize parent directory {:?}", parent)
+        })?;
+        canonical_parent.join(filename)
+    };
+
+    // Verify the canonical target is contained within the canonical project directory.
+    if !canonical_target.starts_with(&canonical_project) {
+        bail!(
+            "Refusing to write to {:?}: resolved path {:?} is outside project directory {:?}",
+            target,
+            canonical_target,
+            canonical_project
+        );
+    }
+
+    Ok(())
 }
 
 /// Folds `.gitignore-dist` into the project's `.gitignore` and removes it, so
