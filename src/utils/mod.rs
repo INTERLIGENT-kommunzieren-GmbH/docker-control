@@ -1,4 +1,4 @@
-use anyhow::{Context, Result};
+use anyhow::{Context, Result, anyhow};
 use std::path::Path;
 
 pub mod acl;
@@ -7,6 +7,34 @@ pub mod forwarding;
 pub mod platform;
 pub mod sudo;
 pub mod throttle_cache;
+
+/// Allowed PHP versions for the fduarte42/docker-php image.
+/// This allowlist prevents arbitrary image tags from being executed during
+/// release and deployment operations that mount sensitive directories and
+/// provide SSH agent forwarding.
+pub const ALLOWED_PHP_VERSIONS: &[&str] = &[
+    "7.4",
+    "7.4-oci",
+    "8.2",
+    "8.2-oci",
+    "8.5",
+    "8.5-oci",
+];
+
+/// Validates that a PHP version string is in the allowed list.
+/// Returns an error with guidance if the version is not allowed.
+pub fn validate_php_version(version: &str) -> Result<()> {
+    if ALLOWED_PHP_VERSIONS.contains(&version) {
+        Ok(())
+    } else {
+        Err(anyhow!(
+            "PHP_VERSION '{}' is not in the allowed list. Allowed versions: {}. \
+             Please update your .env file with a supported version.",
+            version,
+            ALLOWED_PHP_VERSIONS.join(", ")
+        ))
+    }
+}
 
 pub fn stop_ssh_agent() -> Result<()> {
     let pid_file = "/tmp/docker-control-ssh-agent.pid";
@@ -270,4 +298,51 @@ pub fn hash_bytes(bytes: &[u8]) -> String {
         .iter()
         .map(|b| format!("{:02x}", b))
         .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_validate_php_version_accepts_allowed_versions() {
+        for version in ALLOWED_PHP_VERSIONS {
+            assert!(
+                validate_php_version(version).is_ok(),
+                "Version {} should be allowed",
+                version
+            );
+        }
+    }
+
+    #[test]
+    fn test_validate_php_version_rejects_arbitrary_versions() {
+        let invalid_versions = vec![
+            "latest",
+            "8.3",
+            "7.3",
+            "malicious-tag",
+            "8.2-malicious",
+            "../../../etc/passwd",
+            "8.2; echo pwned",
+        ];
+
+        for version in invalid_versions {
+            assert!(
+                validate_php_version(version).is_err(),
+                "Version {} should be rejected",
+                version
+            );
+        }
+    }
+
+    #[test]
+    fn test_validate_php_version_error_message_includes_allowed_list() {
+        let result = validate_php_version("invalid-version");
+        assert!(result.is_err());
+        let err_msg = result.unwrap_err().to_string();
+        assert!(err_msg.contains("invalid-version"));
+        assert!(err_msg.contains("8.2"));
+        assert!(err_msg.contains(".env"));
+    }
 }
