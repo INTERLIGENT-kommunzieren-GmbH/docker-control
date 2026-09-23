@@ -127,6 +127,7 @@ pub async fn execute(
         env_name: &env_name,
         archive_path: &archive_path,
         release_dir: &release_dir,
+        release: &release,
         server_root,
         console_command,
         maintenance_mode: &maintenance_mode,
@@ -215,7 +216,7 @@ async fn create_deployment_archive(
     let obj = repo
         .revparse_single(release)
         .context(format!("Failed to find release '{}'", release))?;
-    let _ = obj.peel_to_tree()?;
+    let tree = obj.peel_to_tree()?;
 
     let mut checkout = git2::build::CheckoutBuilder::new();
     checkout.target_dir(&temp_extract_dir);
@@ -292,6 +293,7 @@ struct DeploymentContext<'a> {
     env_name: &'a str,
     archive_path: &'a Path,
     release_dir: &'a str,
+    release: &'a str,
     server_root: &'a str,
     console_command: &'a str,
     maintenance_mode: &'a str,
@@ -408,11 +410,12 @@ async fn perform_deployment(ctx: DeploymentContext<'_>) -> Result<()> {
         php_cmd
     );
 
-    // 7. Rhai setup
+    // 7. Rhai setup - extract hook from the Git release, not the mutable workspace
     let rhai_engine = setup_rhai_engine(user.to_string(), domain.to_string());
-    let rhai_ast = find_hook_file(ctx.project_dir, ctx.env_name)
-        .map(|path| compile_hook(&rhai_engine, &path))
-        .transpose()?;
+    let rhai_ast = match extract_hook_from_release(ctx.project_dir, ctx.release, ctx.env_name)? {
+        Some(content) => Some(compile_hook_from_string(&rhai_engine, &content)?),
+        None => None,
+    };
 
     let hook_ctx = HookContext {
         server_root: ctx.server_root,
@@ -661,9 +664,56 @@ fn find_hook_file(project_dir: &Path, env_name: &str) -> Option<std::path::PathB
     None
 }
 
+/// Extract deployment hook from the immutable Git release, not the mutable workspace.
+/// This prevents a confused-deputy attack where workspace modifications could inject
+/// malicious hooks even when deploying a trusted release tag.
+fn extract_hook_from_release(
+    project_dir: &Path,
+    release: &str,
+    env_name: &str,
+) -> Result<Option<String>> {
+    let git_path = project_dir.join("htdocs");
+    let repo = git2::Repository::open(&git_path)
+        .context(format!("Failed to open git repository at {:?}", git_path))?;
+    
+    let obj = repo
+        .revparse_single(release)
+        .context(format!("Failed to find release '{}'", release))?;
+    let tree = obj.peel_to_tree()?;
+    
+    let rhai_file = format!("{}.rhai", env_name);
+    let hook_path = format!(".docker-control/deployment-scripts/{}", rhai_file);
+    
+    // Try to find the hook file in the Git tree
+    match tree.get_path(Path::new(&hook_path)) {
+        Ok(entry) => {
+            let object = entry.to_object(&repo)?;
+            if let Some(blob) = object.as_blob() {
+                let content = std::str::from_utf8(blob.content())
+                    .context("Hook file is not valid UTF-8")?
+                    .to_string();
+                ui::info(format!("Loaded deployment hook from release: {}", hook_path));
+                Ok(Some(content))
+            } else {
+                Ok(None)
+            }
+        }
+        Err(_) => {
+            // Hook file doesn't exist in this release - that's fine
+            Ok(None)
+        }
+    }
+}
+
 fn compile_hook(engine: &Engine, path: &Path) -> Result<AST> {
     engine
         .compile_file(path.to_path_buf())
+        .map_err(|e| anyhow!("Failed to compile Rhai script: {}", e))
+}
+
+fn compile_hook_from_string(engine: &Engine, content: &str) -> Result<AST> {
+    engine
+        .compile(content)
         .map_err(|e| anyhow!("Failed to compile Rhai script: {}", e))
 }
 
@@ -754,7 +804,15 @@ mod tests {
     #[test]
     fn test_execute_hook() -> Result<()> {
         let dir = tempdir()?;
-        let htdocs_scripts = dir.path().join("htdocs/.docker-control/deployment-scripts");
+        let htdocs = dir.path().join("htdocs");
+        fs::create_dir_all(&htdocs)?;
+
+        // Initialize a git repository
+        let repo = git2::Repository::init(&htdocs)?;
+        let sig = git2::Signature::now("Test", "test@example.com")?;
+
+        // Create hook file in the repository
+        let htdocs_scripts = htdocs.join(".docker-control/deployment-scripts");
         fs::create_dir_all(&htdocs_scripts)?;
 
         let rhai_content = r#"
@@ -767,6 +825,18 @@ mod tests {
         "#;
         fs::write(htdocs_scripts.join("test_env.rhai"), rhai_content)?;
 
+        // Commit the hook file
+        let mut index = repo.index()?;
+        index.add_path(Path::new(".docker-control/deployment-scripts/test_env.rhai"))?;
+        index.write()?;
+        let tree_id = index.write_tree()?;
+        let tree = repo.find_tree(tree_id)?;
+        repo.commit(Some("HEAD"), &sig, &sig, "Add hook", &tree, &[])?;
+
+        // Tag the commit
+        let head = repo.head()?.peel_to_commit()?;
+        repo.tag("v1.0.0", head.as_object(), &sig, "Release v1.0.0", false)?;
+
         let ctx = HookContext {
             server_root: "/var/www",
             release_dir: "20240101_v1",
@@ -778,8 +848,10 @@ mod tests {
         MOCK_SSH_COMMANDS.with(|c| c.borrow_mut().clear());
 
         let rhai_engine = setup_rhai_engine("user".to_string(), "example.com".to_string());
-        let rhai_ast = find_hook_file(dir.path(), "test_env")
-            .map(|path| compile_hook(&rhai_engine, &path).expect("Failed to compile"));
+        let rhai_ast = match extract_hook_from_release(dir.path(), "v1.0.0", "test_env")? {
+            Some(content) => Some(compile_hook_from_string(&rhai_engine, &content)?),
+            None => None,
+        };
 
         execute_hook(&rhai_engine, &rhai_ast, &ctx, "pre_deploy")?;
         execute_hook(&rhai_engine, &rhai_ast, &ctx, "post_deploy")?;
