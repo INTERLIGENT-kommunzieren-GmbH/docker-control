@@ -2,6 +2,10 @@
 
 All notable changes since 2.3.0 are documented here.
 
+## 2.8.2 — 2026-11-24
+- Update all dependencies to their latest versions, including `base64` 0.23, `hmac` 0.13 and `sha1` 0.11 (used to match hashed `known_hosts` entries during deploy). No behaviour changes.
+- Build releases with cargo-dist 0.34.0, and the macOS binary on GitHub's `macos-latest` runner now that `macos-14` is retired.
+
 ## 2.8.1 — 2026-11-24
 - `doctor` no longer tells you to pull a php image you already have. A `pull` doesn't touch running containers, so after one the container can still run the old image; `doctor` now compares the two and asks only for `dc2 restart` in that case.
 - When `start`/`restart` can't get a php image with the www-data remap, the warning now also names the likely cause right after a docker-php release: the registry doesn't have the new image yet.

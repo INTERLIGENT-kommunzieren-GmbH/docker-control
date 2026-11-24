@@ -561,7 +561,7 @@ dependencies = [
 
 [[package]]
 name = "docker-control"
-version = "2.8.1"
+version = "2.8.2"
 dependencies = [
  "anyhow",
  "base64 0.23.1",
