@@ -2,12 +2,17 @@
 
 All notable changes since 2.3.0 are documented here.
 
+## 2.8.1 — 2026-11-24
+- `doctor` no longer tells you to pull a php image you already have. A `pull` doesn't touch running containers, so after one the container can still run the old image; `doctor` now compares the two and asks only for `dc2 restart` in that case.
+- When `start`/`restart` can't get a php image with the www-data remap, the warning now also names the likely cause right after a docker-php release: the registry doesn't have the new image yet.
+- Hints and messages now name commands as `dc2 <command>` instead of `docker control <command>`, including the usage line of scripts made by `create-control-script`.
+
 ## 2.8.0 — 2026-11-24
 - **No more ACLs.** `www-data` in the php container now runs with your user and group ids: every `docker compose` call passes them as `WWW_DATA_UID`/`WWW_DATA_GID`, **template/compose.yml** hands them to the php service, and the docker-php image remaps `www-data` to them on start. Files the container writes to `htdocs/` and the Composer cache are therefore *owned* by you, not merely writable — which ACLs could never achieve, and which PhpStorm needs: setting a file's modification time (its sync does this) is an owner-only operation.
 - Remove the `setacl` command, the host/container ACL step from `init`, `start` and `restart`, and the `setfacl`/`getfacl` dependencies.
 - `start` and `restart` check the php container after `up`. An image that predates the remap is pulled and the container recreated automatically; a `compose.yml` that doesn't pass the ids, and files you still don't own, are reported with the command that fixes them.
 - `doctor` now checks that `www-data` runs with your ids and that you own everything in `htdocs/` and `volumes/composer-cache/`. `--fix` re-owns those directories with `sudo chown -R`.
-- **Upgrading:** run `docker control update` in each project (so `compose.yml` passes the ids), then `docker control restart`, then `docker control doctor --fix` once to re-own files the container wrote as uid 33 before.
+- **Upgrading:** run `dc2 update` in each project (so `compose.yml` passes the ids), then `dc2 restart`, then `dc2 doctor --fix` once to re-own files the container wrote as uid 33 before.
 
 ## 2.7.2 — 2026-09-07
 - **template/compose.yml**: the `cache` service now also answers to `valkey`, alongside the `redis` alias added in 2.7.0. All three names — the service name `cache` and both aliases — resolve to the same container on `backend-tier`.

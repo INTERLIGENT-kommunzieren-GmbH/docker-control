@@ -71,7 +71,7 @@ pub fn execute(project_dir: &Path, fix: bool) -> Result<()> {
     if fix {
         Err(anyhow!("permission problems remain after --fix"))
     } else {
-        ui::info("Run `docker control doctor --fix` to repair file ownership.");
+        ui::info("Run `dc2 doctor --fix` to repair file ownership.");
         Err(anyhow!("permission problems detected"))
     }
 }
@@ -90,9 +90,7 @@ pub fn ensure_www_data_remap(project_dir: &Path) {
     let mut state = match read_php_state(project_dir) {
         Ok(Some(state)) => state,
         _ => {
-            ui::warning(
-                "Could not inspect the php container; run `docker control doctor` to check it.",
-            );
+            ui::warning("Could not inspect the php container; run `dc2 doctor` to check it.");
             return;
         }
     };
@@ -111,7 +109,8 @@ pub fn ensure_www_data_remap(project_dir: &Path) {
             _ => {
                 ui::warning(
                     "The php container still runs an image without the www-data remap, so it can't write your files. \
-                     If compose.override.yml pins another image, update it, then run `docker control restart`.",
+                     The registry may not have the new image yet (try `dc2 pull` and `dc2 restart` later), \
+                     or compose.override.yml pins another image; update it, then run `dc2 restart`.",
                 );
                 return;
             }
@@ -121,7 +120,7 @@ pub fn ensure_www_data_remap(project_dir: &Path) {
     if !state.remap_requested {
         ui::warning(
             "compose.yml doesn't pass WWW_DATA_UID/WWW_DATA_GID to the php service, so www-data can't write your files. \
-             Run `docker control update`, then `docker control restart`.",
+             Run `dc2 update`, then `dc2 restart`.",
         );
         return;
     }
@@ -130,7 +129,7 @@ pub fn ensure_www_data_remap(project_dir: &Path) {
     if has_foreign_owned(project_dir, &existing_dirs(project_dir), uid) {
         ui::warning(
             "Some project files aren't owned by you (likely written before www-data was remapped). \
-             Run `docker control doctor --fix` to re-own them.",
+             Run `dc2 doctor --fix` to re-own them.",
         );
     }
 }
@@ -154,12 +153,18 @@ fn check_www_data_ids(project_dir: &Path, uid: u32, gid: u32) -> Result<bool> {
         state.uid, state.gid, uid, gid
     ));
     if !state.image_supports_remap {
-        ui::warning(
-            "The php image predates the www-data remap. Run `docker control pull`, then `docker control restart`.",
-        );
+        if docker::newer_image_pulled(project_dir, "php") {
+            ui::warning(
+                "The php container runs an image that predates the www-data remap, but a newer one is already pulled. Run `dc2 restart` to use it.",
+            );
+        } else {
+            ui::warning(
+                "The php image predates the www-data remap. Run `dc2 pull`, then `dc2 restart`.",
+            );
+        }
     } else if !state.remap_requested {
         ui::warning(
-            "compose.yml doesn't pass WWW_DATA_UID/WWW_DATA_GID to the php service. Run `docker control update`, then `docker control restart`.",
+            "compose.yml doesn't pass WWW_DATA_UID/WWW_DATA_GID to the php service. Run `dc2 update`, then `dc2 restart`.",
         );
     } else {
         ui::warning(

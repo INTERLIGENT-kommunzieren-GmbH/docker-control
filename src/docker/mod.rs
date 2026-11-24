@@ -378,6 +378,42 @@ fn get_remote_digest(image: &str) -> Option<String> {
         .map(|s| s.trim().to_string())
 }
 
+/// Whether `service`'s running container was created from an older image than
+/// the one its image reference points at locally now — i.e. a `pull` already
+/// fetched a newer image, which only a recreate (`restart`) puts into use.
+/// `false` when anything can't be inspected.
+pub fn newer_image_pulled(project_dir: &Path, service: &str) -> bool {
+    let docker_output = |args: &[&str]| -> Option<String> {
+        let output = Command::new("docker")
+            .args(args)
+            .current_dir(project_dir)
+            .output()
+            .ok()
+            .filter(|o| o.status.success())?;
+        Some(String::from_utf8_lossy(&output.stdout).trim().to_string())
+    };
+    let dir = project_dir.to_string_lossy();
+    let Some(container) =
+        docker_output(&["compose", "--project-directory", &dir, "ps", "-q", service])
+            .and_then(|ids| ids.lines().next().map(str::to_string))
+    else {
+        return false;
+    };
+    let Some(inspected) = docker_output(&[
+        "inspect",
+        "--format",
+        "{{.Image}} {{.Config.Image}}",
+        &container,
+    ]) else {
+        return false;
+    };
+    let Some((running_id, reference)) = inspected.split_once(' ') else {
+        return false;
+    };
+    docker_output(&["image", "inspect", "--format", "{{.Id}}", reference])
+        .is_some_and(|local_id| !local_id.is_empty() && local_id != running_id)
+}
+
 pub fn is_running(project_dir: &Path) -> bool {
     let output = Command::new("docker")
         .arg("compose")

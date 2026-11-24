@@ -1015,7 +1015,7 @@ if [[ "$1" == "_help_" ]]; then
     # detailed help (shown by `docker-control my-command --help`)
     echo "my-command - My command description"
     echo
-    echo "Usage: docker control my-command [arguments]"
+    echo "Usage: dc2 my-command [arguments]"
     exit 0
 fi
 

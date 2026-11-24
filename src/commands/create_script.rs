@@ -74,10 +74,10 @@ if [[ "$1" == "_desc_" ]]; then
 fi
 
 if [[ "$1" == "_help_" ]]; then
-    # output detailed help (shown by `docker control {escaped_name} --help`)
+    # output detailed help (shown by `dc2 {escaped_name} --help`)
     echo "{escaped_name} - {escaped_description}"
     echo
-    echo "Usage: docker control {escaped_name} [arguments]"
+    echo "Usage: dc2 {escaped_name} [arguments]"
 
     exit 0
 fi

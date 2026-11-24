@@ -574,7 +574,7 @@ async fn async_main() -> anyhow::Result<()> {
                 ui::critical(format!("Error showing status: {}", e));
                 return Err(e);
             }
-            println!("\nRun 'docker control --help' for a list of available commands.");
+            println!("\nRun 'dc2 --help' for a list of available commands.");
             return Ok(());
         }
     };
@@ -899,7 +899,7 @@ fn maybe_report_template_drift(project_dir: &std::path::Path) {
         )
     });
     summary.print(true);
-    ui::info("  Run `docker control update` to apply, or `update --check` to see the diffs.");
+    ui::info("  Run `dc2 update` to apply, or `update --check` to see the diffs.");
 }
 
 /// Tells the user when the running ingress proxy was started from a different
@@ -943,7 +943,7 @@ fn maybe_restart_stale_ingress(prompt: bool) {
     });
 
     if !prompt || !std::io::stdin().is_terminal() {
-        ui::info("  Run `docker control restart-ingress` to apply it.");
+        ui::info("  Run `dc2 restart-ingress` to apply it.");
         return;
     }
 
@@ -960,7 +960,7 @@ fn maybe_restart_stale_ingress(prompt: bool) {
             ui::warning(format!("Failed to restart the ingress: {}", e));
         }
     } else {
-        ui::info("  Run `docker control restart-ingress` when convenient.");
+        ui::info("  Run `dc2 restart-ingress` when convenient.");
     }
 }
 

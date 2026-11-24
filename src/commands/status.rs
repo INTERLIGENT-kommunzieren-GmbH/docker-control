@@ -17,7 +17,7 @@ pub async fn execute(project_dir: &Path) -> Result<()> {
         ui::success("  Plugin Management: ✓ Managed by Docker Control Plugin");
     } else {
         ui::warning("  Plugin Management: ✗ Not managed by Docker Control Plugin");
-        println!("    Run 'docker control init' to initialize this directory");
+        println!("    Run 'dc2 init' to initialize this directory");
     }
 
     // 2. Git Status
@@ -201,7 +201,7 @@ fn show_template_status(project_dir: &Path) {
 
     ui::warning("  Project Template: ○ Changes pending");
     summary.print(false);
-    println!("    Run 'docker control update' to apply, or 'update --check' for diffs");
+    println!("    Run 'dc2 update' to apply, or 'update --check' for diffs");
 }
 
 fn show_deployment_status(project_dir: &Path) {
@@ -217,7 +217,7 @@ fn show_deployment_status(project_dir: &Path) {
         }
         Err(_) => {
             ui::warning("  Deployment Config: ✗ Not configured");
-            println!("    Run 'docker control add-deploy-config' to add deployment environments");
+            println!("    Run 'dc2 add-deploy-config' to add deployment environments");
         }
     }
 }
@@ -286,11 +286,11 @@ async fn show_docker_status(project_dir: &Path) {
                         "  Docker Status: ○ {} containers stopped",
                         container_count
                     ));
-                    println!("    Run 'docker control start' to start containers");
+                    println!("    Run 'dc2 start' to start containers");
                 }
             } else {
                 ui::warning("  Docker Status: ○ No project containers found");
-                println!("    Run 'docker control start' to create and start containers");
+                println!("    Run 'dc2 start' to create and start containers");
             }
         }
         Err(_) => ui::warning("  Docker Status: ✗ Unable to query container status"),

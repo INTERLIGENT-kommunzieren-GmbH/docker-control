@@ -56,7 +56,7 @@ pub fn execute_with(ops: &dyn UpgradeOps) -> Result<()> {
             ui::info("Bringing the ingress back up after the failed upgrade...");
             if let Err(e) = ops.start_ingress() {
                 ui::warning(format!(
-                    "Could not bring the ingress back up ({}). Run `docker control start-ingress`.",
+                    "Could not bring the ingress back up ({}). Run `dc2 start-ingress`.",
                     e
                 ));
             }
@@ -73,7 +73,7 @@ pub fn execute_with(ops: &dyn UpgradeOps) -> Result<()> {
         // error.
         if let Err(e) = ops.start_upgraded_ingress() {
             ui::warning(format!(
-                "Could not start the ingress ({}). Run `docker control start-ingress`.",
+                "Could not start the ingress ({}). Run `dc2 start-ingress`.",
                 e
             ));
         }
@@ -163,7 +163,7 @@ fn start_via_installed_binary() -> Result<()> {
     // reporting a clean success — these may be the pre-upgrade assets.
     ui::warning(
         "Starting the ingress from the pre-upgrade binary instead. If this release changed the \
-         ingress, run `docker control restart-ingress` to pick it up.",
+         ingress, run `dc2 restart-ingress` to pick it up.",
     );
     docker::execute_ingress_compose(&["up", "-d"])
 }
