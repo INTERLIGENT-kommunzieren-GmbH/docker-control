@@ -94,8 +94,8 @@ docker-control install-deps
 
 On startup, the tool also checks for missing dependencies and, on macOS / native Linux
 with Homebrew, offers to install the ones it can. Beyond that, individual commands install
-what they specifically need on demand — e.g. `deploy` will offer to install 7-Zip, and
-`start` the ACL tools — so you rarely need to run `install-deps` by hand. See
+what they specifically need on demand — e.g. `deploy` will offer to install 7-Zip —
+so you rarely need to run `install-deps` by hand. See
 [Dependencies](#14-dependencies).
 
 ---
@@ -105,7 +105,7 @@ what they specifically need on demand — e.g. `deploy` will offer to install 7-
 **Managed project.** Most commands require the current directory to be a *managed
 project*, marked by a `.managed-by-docker-control` sentinel file. `docker-control init`
 creates this file. Commands that mutate a project (`start`, `stop`, `build`, `console`,
-`setacl`, `update`, …) refuse to run outside a managed directory.
+`doctor`, `update`, …) refuse to run outside a managed directory.
 
 **Two repositories.** A project directory is the **infrastructure / operations** layer
 (the compose stack, config, secrets). The actual PHP **application lives in `htdocs/`,
@@ -196,7 +196,7 @@ Interactively prompts for:
 - Optionally **clone a git repository into `htdocs/`** (SSH URL recommended).
 
 It copies the template, renames `.gitignore-dist` → `.gitignore`, creates the `htdocs/`
-directory, applies host ACLs, auto-selects a free database host port in the range
+directory, auto-selects a free database host port in the range
 `33060–33099`, and writes a `.env` file. If the directory is non-empty (and not already
 managed) it warns and asks for confirmation before overwriting.
 
@@ -207,11 +207,20 @@ docker-control init
 #### `start`
 Start the project containers in detached mode (`docker compose up -d`). Before starting,
 it does a throttled check (at most weekly) for outdated container images and offers to
-pull them. After starting, it re-applies host and container ACLs on `htdocs`.
+pull them.
 
-On Linux this requires the ACL tools (`setfacl`/`getfacl`, from the `acl` formula); if
-they're missing, `start` offers to install them and aborts if they can't be obtained.
-macOS falls back to `chmod +a` and needs no extra tools. See [Dependencies](#14-dependencies).
+Every `docker compose` call passes your user and group ids to the php container as
+`WWW_DATA_UID`/`WWW_DATA_GID`, and the image remaps its `www-data` user to them on start, so
+files the container writes to `htdocs/` and the Composer cache belong to you — including
+for operations only an owner may perform, like PhpStorm setting a file's modification time.
+After starting, `start` checks the php container:
+
+- If its image predates that remap, it pulls the latest php image and recreates the
+  container automatically.
+- If `compose.yml` doesn't pass the ids yet (a project created by an older version), it
+  tells you to run [`update`](#update---yes---check---force-template) and restart.
+- If some project files still aren't yours (e.g. written as `www-data`'s old uid 33 before
+  the remap), it points you at [`doctor --fix`](#doctor---fix).
 
 ```bash
 docker-control start
@@ -228,8 +237,8 @@ docker-control stop
 ```
 
 #### `restart`
-Stop then start the containers. Also runs the outdated-image check and re-applies ACLs.
-Like `start`, it requires the ACL tools on Linux.
+Stop then start the containers. Also runs the outdated-image check and the same php
+container checks as `start`.
 
 ```bash
 docker-control restart
@@ -431,34 +440,22 @@ directory, PHP's realpath/opcache in the running container can serve stale paths
 pass `--purge`, and `--purge` checks for uncommitted changes and for commits that exist on no
 remote before asking to confirm.
 
-#### `setacl`
-Re-apply host and container ACL permissions on `htdocs` without restarting. Use this when
-host/container file permissions drift out of sync. The project containers must be running.
-On Linux it requires the ACL tools (`setfacl`/`getfacl`) and offers to install them if
-they're missing.
-
-```bash
-docker-control setacl
-```
-
 #### `doctor [--fix]`
-Diagnose file-access problems for the project, and optionally repair them. The project
-containers must be running. It runs two checks:
+Diagnose file-ownership problems for the project, and optionally repair them. It runs two
+checks:
 
-- **Host ACL on `htdocs`** — whether the host user's rwX ACL (with inheritance) is actually
-  applied, so you can edit files the container creates without `sudo`.
-- **Container access to `/var/www`** — lists every path the container's `www-data` user
-  cannot read or write. This surfaces the common case where Composer's home/XDG directories
-  (`/var/www/.composer`, `.config`, `.cache`) were created later and slipped past the ACL,
-  leaving Composer unable to write its home.
+- **`www-data`'s ids** (only while the containers are running) — whether `www-data` in the
+  php container runs with your user and group ids. If not, it explains why: an image that
+  predates the remap (run `pull`, then `restart`), a `compose.yml` that doesn't pass the ids
+  (run `update`, then `restart`), or a remap that is still running or failed (see
+  `docker compose logs php`).
+- **File ownership** — lists every path in `htdocs/` and `volumes/composer-cache/` that you
+  don't own, typically files a container wrote as uid 33 before the remap existed.
 
 Without `--fix`, `doctor` only reports and exits non-zero if it finds problems (useful in
-scripts). With `--fix` it repairs both sides: it creates the Composer/XDG home directories
-(`.composer`, `.config`, `.cache`, `.local`), re-applies the container ACL (which also
-recomputes the ACL mask), and replays the host ACL on `htdocs`. Before touching the
-container ACL it verifies `setfacl` exists in the php image and, if the `acl` package is
-missing, tells you to update the image (`docker-control pull`) rather than failing with a
-cryptic error. `--fix` may prompt for `sudo` when re-applying the host ACL.
+scripts). With `--fix` it re-owns those directories to you with `sudo chown -R` (so it may
+prompt for your password) and checks again. `--fix` can't repair the `www-data` check; that
+takes a newer image or template, then a restart.
 
 ```bash
 docker-control doctor           # report only
@@ -671,9 +668,9 @@ docker-control cleanup-backups --all          # remove every backup (prompts fir
 Backups are deleted as the host user, without `sudo`. If a `backup_*` folder contains files
 owned by `root` (for example `vendor/` contents created inside the container), removal of
 that folder fails with a `Permission denied` warning and the command moves on to the next
-one — it never escalates privileges. When that happens, keep the host ACL on `htdocs`
-applied (see [`doctor`](#doctor---fix) / `setacl`) so container-created files stay
-host-owned, or remove the leftover folder manually.
+one — it never escalates privileges. Container-created files belong to you since `www-data`
+is remapped to your ids (see [`doctor`](#doctor---fix)), so this only affects backups of
+files created before that, or as `root`; remove such a folder manually.
 
 ### Self-management
 
@@ -846,7 +843,7 @@ Networking: the `frontend-tier` is the external `proxy` network (the ingress); t
 sourced from `secrets/*.txt`.
 
 Prefer `docker-control` commands over raw `docker` / `docker compose`, because the CLI
-also wires up SSH agent forwarding, ACL fixes, ingress, secrets, and env handling.
+also wires up SSH agent forwarding, file ownership, ingress, secrets, and env handling.
 
 ---
 
@@ -1079,7 +1076,6 @@ enable extra features.
 | Sudo | no | Elevated privileges (migration, `trust-ca`). |
 | Rsync | no | Migration tasks. |
 | 7-Zip (`7z`, `p7zip` formula) | on demand | Building deployment packages — required by `deploy`. |
-| setfacl / getfacl (`acl` formula) | on demand (Linux) | Host/container ACLs — required by `start`/`restart`/`setacl` on Linux (macOS falls back to `chmod`). |
 | certutil (`nss` formula) | on demand | Browser CA trust for `trust-ca` — required when a browser NSS store exists. |
 
 **Installing dependencies.** Missing tools that have a Homebrew formula can be installed
@@ -1117,14 +1113,10 @@ self-sign companion signs the first domain. Start the ingress **and** at least o
 running so the CA exists, run `docker-control trust-ca`, then restart the browser. On
 Linux, `certutil` (Homebrew `nss`) is needed for browser trust.
 
-**`setacl` says containers aren't running.** Start the project first with
-`docker-control start`.
-
-**Composer can't write its home (`/var/www/.composer` or `.config`).** The container ACL
-missed directories created after startup. Run `docker-control doctor` to see the offending
-paths, then `docker-control doctor --fix` to create the Composer/XDG homes and re-apply the
-ACLs. If `doctor --fix` reports `setfacl` is missing from the php image, refresh it with
-`docker-control pull`.
+**The container can't write project files, or you can't edit (or PhpStorm can't sync)
+files the container created.** `www-data` isn't running with your ids, or files from before
+the remap are still owned by uid 33. Run `docker-control doctor`; it says which, and
+`docker-control doctor --fix` re-owns the files.
 
 **`update` refuses to run.** In a non-interactive shell it won't rewrite a project without
 `--yes`. Remember `update` rewrites the *project* from the template (a backup is created);

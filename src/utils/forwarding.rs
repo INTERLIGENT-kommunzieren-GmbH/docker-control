@@ -180,10 +180,11 @@ async fn restart_php_containers() -> Result<()> {
                 .args(["compose", "--project-directory", &project, "down"])
                 .current_dir(&project)
                 .status();
-            let _ = std::process::Command::new("docker")
-                .args(["compose", "--project-directory", &project, "up", "-d"])
-                .current_dir(&project)
-                .status();
+            let mut up = std::process::Command::new("docker");
+            up.args(["compose", "--project-directory", &project, "up", "-d"])
+                .current_dir(&project);
+            crate::docker::pass_www_data_ids(&mut up);
+            let _ = up.status();
         }
     }
 

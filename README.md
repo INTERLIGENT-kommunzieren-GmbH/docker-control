@@ -98,6 +98,13 @@ docker-control deploy production
 docker-control deploy staging
 ```
 
+#### `doctor [--fix]`
+Check that `www-data` in the php container runs with your user and group ids, and that you own every file in `htdocs` and `volumes/composer-cache`. `--fix` re-owns files you don't own with `sudo chown -R` (e.g. files a container wrote as uid 33 before the www-data remap).
+
+```bash
+docker-control doctor --fix
+```
+
 #### `help`
 Show help message with all available commands and comprehensive project status information including git repository state, deployment configuration, and Docker container status.
 
@@ -162,13 +169,6 @@ Restart the ingress containers (stops and starts them).
 
 ```bash
 docker-control restart-ingress
-```
-
-#### `setacl`
-Re-apply host and container ACL permissions on `htdocs` without restarting containers. Use this if file permissions between the host and container get out of sync. Requires the project containers to already be running.
-
-```bash
-docker-control setacl
 ```
 
 #### `show-running`

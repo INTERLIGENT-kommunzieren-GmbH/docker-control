@@ -2,6 +2,13 @@
 
 All notable changes since 2.3.0 are documented here.
 
+## Unreleased
+- **No more ACLs.** `www-data` in the php container now runs with your user and group ids: every `docker compose` call passes them as `WWW_DATA_UID`/`WWW_DATA_GID`, **template/compose.yml** hands them to the php service, and the docker-php image remaps `www-data` to them on start. Files the container writes to `htdocs/` and the Composer cache are therefore *owned* by you, not merely writable — which ACLs could never achieve, and which PhpStorm needs: setting a file's modification time (its sync does this) is an owner-only operation.
+- Remove the `setacl` command, the host/container ACL step from `init`, `start` and `restart`, and the `setfacl`/`getfacl` dependencies.
+- `start` and `restart` check the php container after `up`. An image that predates the remap is pulled and the container recreated automatically; a `compose.yml` that doesn't pass the ids, and files you still don't own, are reported with the command that fixes them.
+- `doctor` now checks that `www-data` runs with your ids and that you own everything in `htdocs/` and `volumes/composer-cache/`. `--fix` re-owns those directories with `sudo chown -R`.
+- **Upgrading:** run `docker control update` in each project (so `compose.yml` passes the ids), then `docker control restart`, then `docker control doctor --fix` once to re-own files the container wrote as uid 33 before.
+
 ## 2.7.2 — 2026-09-07
 - **template/compose.yml**: the `cache` service now also answers to `valkey`, alongside the `redis` alias added in 2.7.0. All three names — the service name `cache` and both aliases — resolve to the same container on `backend-tier`.
 - Add `module purge <vendor>/<name>` for a development checkout you are done with. `unlink` without `--purge` keeps the checkout in `htdocs/modules/` on purpose — it is your work, and the one thing Composer cannot reproduce — but until now nothing could see or remove it afterwards: `list` works from `htdocs/vendor/` and the `composer.json` repositories entries, so a checkout no path repository points at was invisible to every command, and the deletion path was reachable only from inside `unlink --purge`. The only way out was `rm -rf`.

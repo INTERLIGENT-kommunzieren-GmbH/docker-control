@@ -9,7 +9,7 @@ already cost someone a day.
 Two neighbouring documents, so you know when to leave this one:
 
 - **[AGENTS.md](AGENTS.md)** — the architecture reference and the *why* behind the
-  load-bearing decisions (template state, ingress fingerprinting, Composer/ACL behaviour,
+  load-bearing decisions (template state, ingress fingerprinting, Composer behaviour, the `www-data` remap,
   argv parsing). It is written for coding agents but is the best prose on the design.
   Read it once end to end before your first non-trivial change.
 - **[USER-MANUAL.md](USER-MANUAL.md)** — what the tool does from the outside. When you
@@ -26,7 +26,7 @@ worktrees, and deploys tagged releases to remote servers over SSH.
 
 It is a **single binary** (`docker-control`, aliased `dc2` in the Homebrew distribution)
 that mostly orchestrates other programs: `docker compose`, `git`, `composer` (inside a
-container), `ssh`/`scp`, `7z`, `setfacl`. Very little happens in-process — which shapes
+container), `ssh`/`scp`, `7z`. Very little happens in-process — which shapes
 everything about how it is written and tested.
 
 It also still implements the Docker CLI plugin protocol — the hidden
@@ -60,7 +60,7 @@ Three consequences worth internalising on day one:
 | `cargo-nextest` | **Required** for the test suite: `cargo install cargo-nextest`. See §6 for why `cargo test` is not equivalent. |
 | Docker + Docker Compose ≥ 2.4 | A running daemon. Some integration tests really do run containers. |
 | `git`, `ssh`, `scp`, `bash` | Hard dependencies of the tool at runtime. |
-| `7z` (`p7zip`), `rsync`, `setfacl`/`getfacl` (`acl`, Linux), `certutil` (`nss`) | Optional at runtime, needed for deploy / migrate / ACL / `trust-ca` work. |
+| `7z` (`p7zip`), `rsync`, `certutil` (`nss`) | Optional at runtime, needed for deploy / migrate / `trust-ca` work. |
 | Homebrew | Only if you touch `upgrade`, `install-deps`, or the distribution path. |
 | `pandoc` + poppler (`pdftotext`) | Only to rebuild `USER-MANUAL.pdf`; WeasyPrint comes from a cached venv the build script creates. |
 
@@ -160,7 +160,7 @@ src/
                        extracted to the OS config dir
   template/mod.rs      template sync state (`.docker-control/state.json`), three-way diff
   ui/mod.rs            info/warning/critical/success/debug — all user output goes here
-  utils/               platform detection, SSH forwarding, dependency checks, ACL,
+  utils/               platform detection, SSH forwarding, dependency checks,
                        sudo, throttle cache, `is_managed()`, PhpStorm .idea helpers
 template/              the project skeleton shipped inside the binary (compose.yml,
                        config/, secrets/, .env-dist, its own CLAUDE.md for generated projects)
@@ -319,9 +319,9 @@ is the one intentional exception to the "commands return `anyhow::Result<()>`" r
 
 Unit tests live beside the code (`#[cfg(test)] mod tests`), integration tests in `tests/`.
 Both run under **`cargo-nextest`**, which is not optional: nextest runs each test in its
-own process, and some tests mutate process-global state (e.g.
-`utils::acl::current_username_prefers_user_env` calls `std::env::set_var`). Under
-`cargo test`'s shared-process, multi-threaded harness those are racy.
+own process, which isolates tests that touch process-global state (the environment, the
+working directory). Under `cargo test`'s shared-process, multi-threaded harness those are
+racy.
 
 `.config/nextest.toml` sets `retries = 2` and a 60s slow-timeout — the retries exist
 because the Docker-backed tests are genuinely flaky, not to paper over logic bugs.
@@ -428,7 +428,7 @@ Add a `Dependency` entry in `src/utils/dependencies.rs` with `critical` set hone
 `brew_formula` only where `brew install` genuinely puts that binary on `PATH` — the
 existing `None`s each have a comment explaining why (keg-only `openssh`, `7z` vs `7zz`,
 Docker Desktop). Prefer a per-command check —
-`dependencies::require_dependency("7z")` or `require_acl_tools()`, both of which offer a
+`dependencies::require_dependency("7z")`, which offers a
 direct Homebrew install at the point of need — over marking something critical at
 startup: a hard startup dependency is paid by every command.
 Then document it in `USER-MANUAL.md` §14.
@@ -516,12 +516,11 @@ populated), and `bin-aliases` adds `dc2`.
   outcomes that are not the one you asked for. Verify on disk.
 - **Calling Composer with a live `vendor/` symlink in place during `unlink`.** Composer
   follows it into a dirty worktree and aborts *after* rewriting `composer.lock`.
-- **"Everything under /var/www must be writable" as an ACL check.** The container ACL is a
-  POSIX *named-user* entry (`u:33:rwX`), and the kernel ignores it for the file's own
-  owner. Files `www-data` owns at `0444` (git objects, the Composer cache) can never be
-  fixed by re-running `setfacl`, so a naive predicate re-reports them forever.
-  `find_inaccessible_paths` in `commands/doctor.rs` flags only what the ACL actually
-  governs — read its doc comment before widening it.
+- **Granting the container write access with ACLs or groups.** That's what the tool used
+  to do, and it can't work for PhpStorm: setting an explicit mtime is an owner-only
+  operation. The php image remaps `www-data` to the host user's ids instead
+  (`WWW_DATA_UID`/`WWW_DATA_GID`, passed by `docker::execute_compose`); see the `doctor`
+  paragraph in AGENTS.md.
 - **Stamping a version where a content fingerprint is needed.** Both the template state
   and the ingress state made this choice deliberately; a version stamp turns into a
   prompt after every upgrade that changed nothing.

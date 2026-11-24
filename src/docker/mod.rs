@@ -28,6 +28,32 @@ pub fn connect() -> Result<Docker> {
     }
 }
 
+/// Variables the `php` image's entrypoint reads to remap `www-data` to another
+/// uid/gid before anything runs as it. The template's `compose.yml` passes them
+/// through to the container.
+pub const WWW_DATA_UID_VAR: &str = "WWW_DATA_UID";
+pub const WWW_DATA_GID_VAR: &str = "WWW_DATA_GID";
+
+/// The host user's uid and gid, which `www-data` in the `php` container is
+/// remapped to.
+pub fn host_ids() -> (u32, u32) {
+    unsafe { (libc::getuid(), libc::getgid()) }
+}
+
+/// Hands the host user's ids to `docker compose` as `WWW_DATA_UID`/`WWW_DATA_GID`,
+/// so files `www-data` writes to the bind mounts are owned by the host user —
+/// the host user can then do owner-only things to them, like setting an
+/// explicit mtime (what PhpStorm does when syncing). A value already in the
+/// environment wins, as a deliberate override.
+pub fn pass_www_data_ids(cmd: &mut Command) {
+    let (uid, gid) = host_ids();
+    for (var, id) in [(WWW_DATA_UID_VAR, uid), (WWW_DATA_GID_VAR, gid)] {
+        if std::env::var_os(var).is_none() {
+            cmd.env(var, id.to_string());
+        }
+    }
+}
+
 pub fn execute_compose(project_dir: &Path, args: &[&str]) -> Result<()> {
     let mut cmd = Command::new("docker");
     cmd.arg("compose")
@@ -35,6 +61,7 @@ pub fn execute_compose(project_dir: &Path, args: &[&str]) -> Result<()> {
         .arg(project_dir)
         .args(args)
         .current_dir(project_dir);
+    pass_www_data_ids(&mut cmd);
 
     let status = cmd.status().context("Failed to execute docker compose")?;
 

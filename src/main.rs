@@ -105,9 +105,9 @@ enum Commands {
         #[arg(short, long)]
         yes: bool,
     },
-    /// Check that /var/www is readable/writable by the container's www-data user
+    /// Check that the container's www-data runs as you and that you own the project files
     Doctor {
-        /// Repair any inaccessible paths (mkdir Composer/XDG homes + re-apply ACL)
+        /// Re-own files you don't own (sudo chown -R htdocs, volumes/composer-cache)
         #[arg(long)]
         fix: bool,
     },
@@ -140,9 +140,6 @@ enum Commands {
     Restart,
     /// Restart the ingress containers
     RestartIngress,
-    /// Fix host and container ACL permissions on htdocs
-    #[command(name = "setacl")]
-    SetAcl,
     /// Show all running projects managed by the Docker plugin
     ShowRunning,
     /// Start the project containers
@@ -672,73 +669,27 @@ async fn async_main() -> anyhow::Result<()> {
         }
         Commands::Restart => {
             check_managed(&project_dir);
-            utils::dependencies::require_acl_tools()?;
             maybe_report_template_drift(&project_dir);
             maybe_restart_stale_ingress(true);
             maybe_offer_image_pull(&project_dir);
             docker::execute_compose(&project_dir, &["down", "--remove-orphans"])?;
             docker::execute_compose(&project_dir, &["up", "-d"])?;
-            if let Err(e) = utils::acl::apply_host_acl(&project_dir) {
-                ui::warning(format!(
-                    "Could not set host ACL permissions on htdocs: {}",
-                    e
-                ));
-            }
-            if let Err(e) = utils::acl::apply_container_acl(&project_dir) {
-                ui::warning(format!(
-                    "Could not set container ACL permissions on htdocs: {}",
-                    e
-                ));
-            }
+            commands::doctor::ensure_www_data_remap(&project_dir);
         }
         Commands::RestartIngress => {
             docker::execute_ingress_compose(&["down"])?;
             docker::execute_ingress_compose(&["up", "-d"])?;
-        }
-        Commands::SetAcl => {
-            check_managed(&project_dir);
-            utils::dependencies::require_acl_tools()?;
-            if !docker::is_running(&project_dir) {
-                ui::critical(
-                    "Project containers are not running. Start the project first with `docker-control start`.",
-                );
-                std::process::exit(1);
-            }
-            if let Err(e) = utils::acl::apply_host_acl(&project_dir) {
-                ui::warning(format!(
-                    "Could not set host ACL permissions on htdocs: {}",
-                    e
-                ));
-            }
-            if let Err(e) = utils::acl::apply_container_acl(&project_dir) {
-                ui::warning(format!(
-                    "Could not set container ACL permissions on htdocs: {}",
-                    e
-                ));
-            }
         }
         Commands::ShowRunning => {
             commands::show_running::execute().await?;
         }
         Commands::Start => {
             check_managed(&project_dir);
-            utils::dependencies::require_acl_tools()?;
             maybe_report_template_drift(&project_dir);
             maybe_restart_stale_ingress(true);
             maybe_offer_image_pull(&project_dir);
             docker::execute_compose(&project_dir, &["up", "-d"])?;
-            if let Err(e) = utils::acl::apply_host_acl(&project_dir) {
-                ui::warning(format!(
-                    "Could not set host ACL permissions on htdocs: {}",
-                    e
-                ));
-            }
-            if let Err(e) = utils::acl::apply_container_acl(&project_dir) {
-                ui::warning(format!(
-                    "Could not set container ACL permissions on htdocs: {}",
-                    e
-                ));
-            }
+            commands::doctor::ensure_www_data_remap(&project_dir);
         }
         Commands::StartIngress => {
             docker::execute_ingress_compose(&["up", "-d"])?;
@@ -828,7 +779,6 @@ fn command_requires_managed_project(name: &str) -> bool {
             | "doctor"
             | "module"
             | "pull"
-            | "setacl"
             | "start"
             | "stop"
             | "restart"

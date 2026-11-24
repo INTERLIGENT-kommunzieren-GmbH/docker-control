@@ -93,7 +93,7 @@ The containers bind-mount `$HOMEBREW_PREFIX/etc/docker-control/ingress/volumes/.
 
 **Custom commands** — Shell scripts in `control-scripts/` or `htdocs/.docker-control/control-scripts/` are dispatched as external subcommands.
 
-**`doctor` and the container ACL** (`commands/doctor.rs`, `utils/acl.rs`) — the ACL applied to the project is a POSIX *named-user* entry (`setfacl -m u:33:rwX`, uid 33 = `www-data`). The kernel consults a named-user entry only for processes that are **not** the file's owner; for the owner the `user::` bits win. So read-only files that `www-data` itself owns (git writes its objects `0444` — vendor `.git/objects`, the Composer cache) can never be made writable by re-running `setfacl`, and a naive "everything must be writable" check would re-report them forever as "permission problems remain after --fix". `find_inaccessible_paths` therefore flags only what the ACL actually governs: unreadable paths (excluding broken symlinks, since `find ! -readable` follows a dead target), unwritable **directories**, and unwritable files **not** owned by `www-data`. The full reasoning is in the doc comment above that function — read it before widening the predicate.
+**`doctor` and the www-data remap** (`commands/doctor.rs`) — there are no ACLs any more. `docker::execute_compose` (and the ssh-forwarding restart in `utils/forwarding.rs`) exports `WWW_DATA_UID`/`WWW_DATA_GID` as the host user's ids via `docker::pass_www_data_ids`, the template passes them to the php service, and the docker-php image's entrypoint (`/usr/local/bin/docker-php-entrypoint`) remaps `www-data` to them before supervisord starts. Ownership, not write access, is the point: setting an explicit mtime (PhpStorm's sync) is owner-only, which no ACL or group can grant. `ensure_www_data_remap` runs after `up` in `start`/`restart`: it detects an image without the entrypoint (pulls and recreates `php`), a `compose.yml` without the variables, and leftover foreign-owned files. Don't check the remap by reading `id -u www-data` right after `up` — the entrypoint may still be re-owning files; the entrypoint's presence is the deterministic signal. `doctor --fix` re-owns with `sudo chown -R` on the host.
 
 ### Testing patterns
 
@@ -110,6 +110,7 @@ Interactive prompt dependencies (`inquire`) are abstracted behind trait objects 
 | `DOCKER_CONTROL_INGRESS_DIR` | Override ingress directory path |
 | `SSH_AUTH_PORT` | Set automatically to `<bind_ip>:2222`; read by deploy/release Docker commands |
 | `PHP_VERSION` | Read from project `.env`; used for the `fduarte42/docker-php` image tag |
+| `WWW_DATA_UID` / `WWW_DATA_GID` | Set by every `docker compose` call to the host user's ids (an existing value wins); the php image remaps `www-data` to them |
 
 ## Documentation
 

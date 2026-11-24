@@ -170,6 +170,10 @@ services:
       SELF_SIGNED_HOST: ${BASE_DOMAIN}, www.${BASE_DOMAIN}
       XDEBUG_IP: ${XDEBUG_IP:-host.docker.internal}
       IDE_KEY: ${IDE_KEY:-PHPSTORM}
+      # set by docker-control to the host user's ids: the image remaps www-data to them on start,
+      # so files it writes to the bind mounts belong to the host user
+      WWW_DATA_UID: ${WWW_DATA_UID:-}
+      WWW_DATA_GID: ${WWW_DATA_GID:-}
     image: fduarte42/docker-php:${PHP_VERSION}-debug
     extra_hosts:
       - "host.docker.internal:host-gateway"

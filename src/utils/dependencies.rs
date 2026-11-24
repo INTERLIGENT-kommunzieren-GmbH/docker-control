@@ -8,7 +8,7 @@ use std::process::Command;
 
 /// Commands whose own `--version`/no-arg invocation may exit non-zero, so
 /// presence is checked via `which` instead.
-const CHECK_VIA_WHICH: &[&str] = &["scp", "7z", "getfacl", "certutil"];
+const CHECK_VIA_WHICH: &[&str] = &["scp", "7z", "certutil"];
 
 // Minimum versions required by the current compose templates.
 // Docker 20.10: needed for `host-gateway` in extra_hosts.
@@ -108,26 +108,6 @@ const DEPENDENCIES: &[Dependency] = &[
         // formula ships the official upstream build whose binary is named `7zz`,
         // so it would not satisfy the `7z` check.
         brew_formula: Some("p7zip"),
-    },
-    Dependency {
-        name: "setfacl",
-        command: "setfacl",
-        args: &["--version"],
-        critical: false,
-        description: "Required for granting the host user and the container's www-data user access to htdocs",
-        // Linux-only ACL tooling; macOS falls back to `chmod +a` and skips this
-        // check entirely. On Linux the `acl` Homebrew formula provides both
-        // `setfacl` and `getfacl` (installers filter this out on macOS).
-        brew_formula: Some("acl"),
-    },
-    Dependency {
-        name: "getfacl",
-        command: "getfacl",
-        args: &[],
-        critical: false,
-        description: "Required for detecting existing ACLs on htdocs before re-applying them",
-        // Provided by the `acl` formula on Linux (installers filter this out on macOS).
-        brew_formula: Some("acl"),
     },
     Dependency {
         name: "certutil",
@@ -300,21 +280,6 @@ pub fn require_dependency(command: &str) -> Result<()> {
     ))
 }
 
-/// Ensures the Linux ACL tools (`setfacl`/`getfacl`) that `start`/`restart`/`setacl` use
-/// to grant the host user and the container `www-data` user access to `htdocs` are
-/// present, offering a direct Homebrew install of the `acl` formula if they're missing.
-///
-/// On macOS the ACL logic falls back to `chmod +a`/`ls` (which ship with the OS) and
-/// there is no `acl` formula, so this is a no-op there.
-pub fn require_acl_tools() -> Result<()> {
-    if cfg!(target_os = "macos") {
-        return Ok(());
-    }
-    require_dependency("setfacl")?;
-    require_dependency("getfacl")?;
-    Ok(())
-}
-
 /// Offers to `brew install` any missing critical dependency that has a `brew_formula`,
 /// removing newly-installed ones from `missing_critical`.
 /// No-op on platforms where Homebrew isn't the standard tool, when nothing
@@ -323,7 +288,7 @@ pub fn require_acl_tools() -> Result<()> {
 /// the user declines.
 ///
 /// Optional dependencies are intentionally *not* handled here — they're installed on
-/// demand by [`require_dependency`]/[`require_acl_tools`] when a command actually needs them.
+/// demand by [`require_dependency`] when a command actually needs them.
 fn maybe_offer_brew_install(missing_critical: &mut Vec<&'static Dependency>) {
     if !can_prompt_brew(&platform::detect_platform().platform) {
         return;
@@ -390,13 +355,9 @@ pub fn install_brew_dependencies() -> Result<()> {
 
     // Every dependency that Homebrew can reliably provide, critical and optional alike.
     // SSH/SCP/Docker/etc. carry no `brew_formula` and are filtered out.
-    // macOS has no `acl` formula (and doesn't need setfacl/getfacl — it falls back
-    // to `chmod +a`), so skip those tools there.
-    let skip_acl_tools = cfg!(target_os = "macos");
     let installable: Vec<&'static Dependency> = DEPENDENCIES
         .iter()
         .filter(|dep| dep.brew_formula.is_some())
-        .filter(|dep| !(skip_acl_tools && matches!(dep.command, "setfacl" | "getfacl")))
         .collect();
 
     if installable.is_empty() {
@@ -443,11 +404,11 @@ pub fn check_dependencies() -> Result<()> {
     // ui::debug("Checking external CLI dependencies...");
     let mut missing_critical = Vec::new();
 
-    // Only critical dependencies are checked at startup. Optional ones (setfacl/getfacl,
-    // certutil, 7z, rsync, sudo) are enforced on demand by the command that needs them
-    // (e.g. `deploy` → 7z, `trust-ca` → certutil, `start`/`restart` → setfacl/getfacl) via
-    // `require_dependency`/`require_acl_tools`, which offer a direct Homebrew install at the
-    // point of use — so they're no longer flagged (or prompted for) on every invocation.
+    // Only critical dependencies are checked at startup. Optional ones (certutil, 7z,
+    // rsync, sudo) are enforced on demand by the command that needs them (e.g. `deploy` →
+    // 7z, `trust-ca` → certutil) via `require_dependency`, which offers a direct Homebrew
+    // install at the point of use — so they're not flagged (or prompted for) on every
+    // invocation.
     for dep in DEPENDENCIES.iter().filter(|dep| dep.critical) {
         if !dependency_exists(dep) {
             missing_critical.push(dep);
@@ -540,10 +501,6 @@ mod tests {
         assert!(!installable.contains(&"Docker"));
         assert!(!installable.contains(&"Docker Compose"));
         assert!(!installable.contains(&"Sudo"));
-        // setfacl/getfacl are installable on Linux via the `acl` formula (installers
-        // filter them out on macOS, where the ACL logic falls back to `chmod +a`).
-        assert!(installable.contains(&"setfacl"));
-        assert!(installable.contains(&"getfacl"));
     }
 
     #[test]
@@ -555,17 +512,6 @@ mod tests {
             .find(|dep| dep.name == "7-Zip")
             .expect("7-Zip dependency should exist");
         assert_eq!(seven_zip.brew_formula, Some("p7zip"));
-    }
-
-    #[test]
-    fn acl_tools_share_the_acl_formula() {
-        for name in ["setfacl", "getfacl"] {
-            let dep = DEPENDENCIES
-                .iter()
-                .find(|dep| dep.name == name)
-                .unwrap_or_else(|| panic!("{name} dependency should exist"));
-            assert_eq!(dep.brew_formula, Some("acl"));
-        }
     }
 
     #[test]
@@ -596,11 +542,6 @@ mod tests {
         };
 
         assert_eq!(dedup_formulas(&[&a, &b, &c]), vec!["shared", "other"]);
-    }
-
-    #[test]
-    fn getfacl_is_checked_via_which() {
-        assert!(CHECK_VIA_WHICH.contains(&"getfacl"));
     }
 
     #[test]
