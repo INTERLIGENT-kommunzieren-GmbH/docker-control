@@ -2,7 +2,7 @@
 
 All notable changes since 2.3.0 are documented here.
 
-## Unreleased
+## 2.8.0 — 2026-11-24
 - **No more ACLs.** `www-data` in the php container now runs with your user and group ids: every `docker compose` call passes them as `WWW_DATA_UID`/`WWW_DATA_GID`, **template/compose.yml** hands them to the php service, and the docker-php image remaps `www-data` to them on start. Files the container writes to `htdocs/` and the Composer cache are therefore *owned* by you, not merely writable — which ACLs could never achieve, and which PhpStorm needs: setting a file's modification time (its sync does this) is an owner-only operation.
 - Remove the `setacl` command, the host/container ACL step from `init`, `start` and `restart`, and the `setfacl`/`getfacl` dependencies.
 - `start` and `restart` check the php container after `up`. An image that predates the remap is pulled and the container recreated automatically; a `compose.yml` that doesn't pass the ids, and files you still don't own, are reported with the command that fixes them.
