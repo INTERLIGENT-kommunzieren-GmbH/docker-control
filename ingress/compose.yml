@@ -13,7 +13,6 @@ services:
       restart_policy:
         condition: any
     volumes:
-      - "/var/run/docker.sock:/tmp/docker.sock:ro,z"
       - "${HOMEBREW_PREFIX}/etc/docker-control/ingress/volumes/vhosts.d:/etc/nginx/vhost.d:ro"
       - "${HOMEBREW_PREFIX}/etc/docker-control/ingress/volumes/tls:/etc/nginx/certs:ro"
     logging:
@@ -34,7 +33,6 @@ services:
       restart_policy:
         condition: any
     volumes:
-      - "/var/run/docker.sock:/var/run/docker.sock:ro,z"
       - "${HOMEBREW_PREFIX}/etc/docker-control/ingress/volumes/tls:/etc/nginx/certs:rw"
 
 networks:
