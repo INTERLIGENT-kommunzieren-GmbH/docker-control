@@ -350,6 +350,9 @@ fn execute_composer_install(
         .map(|l| l.split('=').nth(1).unwrap_or("8.2"))
         .unwrap_or("8.2");
 
+    // Validate PHP version against allowlist to prevent execution of arbitrary Docker images
+    crate::utils::validate_php_version(php_version)?;
+
     let ssh_auth_port =
         std::env::var("SSH_AUTH_PORT").unwrap_or_else(|_| "host.docker.internal:2222".to_string());
 
