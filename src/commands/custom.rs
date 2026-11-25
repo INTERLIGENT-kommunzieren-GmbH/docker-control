@@ -223,7 +223,17 @@ pub fn get_custom_commands(project_dir: &Path) -> Vec<CustomCommand> {
     commands
 }
 
+/// Invokes a script's `_desc_` hook and returns its trimmed output, or a default message if
+/// the hook is absent/fails. As a guard against scripts written before this feature existed
+/// (which would otherwise run their real body when probed with `_desc_`), we only probe
+/// scripts that contain a quoted `_desc_` — mirroring the same guard in [`get_override`]
+/// and [`get_help`].
 fn get_description(path: &PathBuf) -> String {
+    match fs::read_to_string(path) {
+        Ok(contents) if contents.contains("\"_desc_\"") || contents.contains("'_desc_'") => {}
+        _ => return "No description available".to_string(),
+    }
+
     let output = Command::new("bash").arg(path).arg("_desc_").output();
 
     match output {
