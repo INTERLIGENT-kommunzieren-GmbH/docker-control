@@ -51,6 +51,15 @@ impl GitService {
 
         match known_hosts::check(host, type_name, raw) {
             known_hosts::HostKeyStatus::Match => Ok(CertificateCheckStatus::CertificateOk),
+            known_hosts::HostKeyStatus::Revoked => {
+                crate::ui::critical(format!(
+                    "REVOKED HOST KEY for '{host}'! \
+                     The {} host key matches an explicitly revoked entry in ~/.ssh/known_hosts. \
+                     Refusing to connect.",
+                    key_type.short_name()
+                ));
+                Err(git2::Error::from_str("revoked host key rejected"))
+            }
             known_hosts::HostKeyStatus::Changed => {
                 crate::ui::critical(format!(
                     "WARNING: REMOTE HOST IDENTIFICATION HAS CHANGED for '{host}'! \
