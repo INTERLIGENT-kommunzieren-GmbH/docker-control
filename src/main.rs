@@ -98,7 +98,7 @@ enum Commands {
         release: Option<String>,
 
         /// Maintenance mode to use when --yes is specified (hard|soft)
-        #[arg(long, default_value = "hard")]
+        #[arg(long, default_value = "hard", value_parser = ["hard", "soft"])]
         maintenance_mode: String,
 
         /// Skip all interactive prompts
