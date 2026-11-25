@@ -32,6 +32,8 @@ pub struct Environment {
     pub shared_directories: Option<Vec<String>>,
     #[serde(rename = "sharedFiles")]
     pub shared_files: Option<Vec<String>>,
+    #[serde(rename = "sshHostKey")]
+    pub ssh_host_key: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]

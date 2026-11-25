@@ -89,6 +89,13 @@ pub async fn execute(
     }
 
     ui::info(format!("Deploying to {}@{}...", env.user, env.domain));
+    
+    // Inform user about SSH host key verification
+    if env.ssh_host_key.is_some() {
+        ui::info("SSH host key verification: Using configured fingerprint from .deploy.json");
+    } else {
+        ui::info("SSH host key verification: Using ~/.ssh/known_hosts (host must be pre-trusted)");
+    }
 
     // Create deployment archive
     let timestamp = chrono::Utc::now().format("%Y%m%d%H%M%S").to_string();
@@ -301,6 +308,7 @@ struct DeploymentContext<'a> {
 async fn perform_deployment(ctx: DeploymentContext<'_>) -> Result<()> {
     let user = &ctx.env.user;
     let domain = &ctx.env.domain;
+    let host_key = ctx.env.ssh_host_key.as_deref();
     let remote_releases = format!("{}/releases", ctx.server_root);
     let remote_archive = format!(
         "{}/{}",
@@ -310,11 +318,11 @@ async fn perform_deployment(ctx: DeploymentContext<'_>) -> Result<()> {
     let remote_release_path = format!("{}/{}", remote_releases, ctx.release_dir);
 
     // 1. Ensure releases dir exists
-    ssh::exec_ssh(user, domain, &format!("mkdir -p {}", sq(&remote_releases)))?;
+    ssh::exec_ssh(user, domain, &format!("mkdir -p {}", sq(&remote_releases)), host_key)?;
 
     // 2. Transfer archive
     ui::info("Transferring archive...");
-    ssh::copy_ssh(user, domain, ctx.archive_path, &remote_archive)?;
+    ssh::copy_ssh(user, domain, ctx.archive_path, &remote_archive, host_key)?;
 
     // 3. Extract and remove archive
     ui::info("Extracting archive...");
@@ -322,6 +330,7 @@ async fn perform_deployment(ctx: DeploymentContext<'_>) -> Result<()> {
         user,
         domain,
         &format!("mkdir -p {}", sq(&remote_release_path)),
+        host_key,
     )?;
     ssh::exec_ssh(
         user,
@@ -331,8 +340,9 @@ async fn perform_deployment(ctx: DeploymentContext<'_>) -> Result<()> {
             sq(&remote_release_path),
             sq(&remote_archive)
         ),
+        host_key,
     )?;
-    ssh::exec_ssh(user, domain, &format!("rm -f {}", sq(&remote_archive)))?;
+    ssh::exec_ssh(user, domain, &format!("rm -f {}", sq(&remote_archive)), host_key)?;
 
     // 4. Cleanup old releases (keep last 5)
     // ls -d1t $SERVER_ROOT/releases/* | grep -v $(readlink -f $SERVER_ROOT/current) | egrep "^$SERVER_ROOT/releases/[0-9]{14}_.+$" | tail -n +6 | xargs rm -rf
@@ -340,7 +350,7 @@ async fn perform_deployment(ctx: DeploymentContext<'_>) -> Result<()> {
         "bash -c 'ls -d1t {remote_releases}/* 2>/dev/null | grep -v $(readlink -f {}/current 2>/dev/null || echo \"none\") | grep -E \"{remote_releases}/[0-9]{{14}}_.+$\" | tail -n +6 | xargs rm -rf 2>/dev/null || true'",
         ctx.server_root
     );
-    let _ = ssh::exec_ssh(user, domain, &cleanup_cmd);
+    let _ = ssh::exec_ssh(user, domain, &cleanup_cmd, host_key);
 
     // 5. Shared paths
     ui::info("Handling shared paths...");
@@ -348,7 +358,7 @@ async fn perform_deployment(ctx: DeploymentContext<'_>) -> Result<()> {
         for dir in dirs {
             let shared_path = format!("{}/shared/{}", ctx.server_root, dir);
             let target_path = format!("{}/{}", remote_release_path, dir);
-            ssh::exec_ssh(user, domain, &format!("mkdir -p {}", sq(&shared_path)))?;
+            ssh::exec_ssh(user, domain, &format!("mkdir -p {}", sq(&shared_path)), host_key)?;
             ssh::exec_ssh(
                 user,
                 domain,
@@ -358,6 +368,7 @@ async fn perform_deployment(ctx: DeploymentContext<'_>) -> Result<()> {
                     sq(&shared_path),
                     sq(&target_path)
                 ),
+                host_key,
             )?;
         }
     }
@@ -370,8 +381,8 @@ async fn perform_deployment(ctx: DeploymentContext<'_>) -> Result<()> {
                 .unwrap()
                 .to_string_lossy()
                 .into_owned();
-            ssh::exec_ssh(user, domain, &format!("mkdir -p {}", sq(&shared_dir)))?;
-            ssh::exec_ssh(user, domain, &format!("touch {}", sq(&shared_path)))?;
+            ssh::exec_ssh(user, domain, &format!("mkdir -p {}", sq(&shared_dir)), host_key)?;
+            ssh::exec_ssh(user, domain, &format!("touch {}", sq(&shared_path)), host_key)?;
             ssh::exec_ssh(
                 user,
                 domain,
@@ -381,6 +392,7 @@ async fn perform_deployment(ctx: DeploymentContext<'_>) -> Result<()> {
                     sq(&shared_path),
                     sq(&target_path)
                 ),
+                host_key,
             )?;
         }
     }
@@ -409,7 +421,7 @@ async fn perform_deployment(ctx: DeploymentContext<'_>) -> Result<()> {
     );
 
     // 7. Rhai setup
-    let rhai_engine = setup_rhai_engine(user.to_string(), domain.to_string());
+    let rhai_engine = setup_rhai_engine(user.to_string(), domain.to_string(), host_key.map(|s| s.to_string()));
     let rhai_ast = find_hook_file(ctx.project_dir, ctx.env_name)
         .map(|path| compile_hook(&rhai_engine, &path))
         .transpose()?;
@@ -423,7 +435,7 @@ async fn perform_deployment(ctx: DeploymentContext<'_>) -> Result<()> {
 
     // 8. Reload FPM
     ui::info("Reloading FPM...");
-    let _ = ssh::exec_ssh(user, domain, "sudo php-fpm-reload.sh");
+    let _ = ssh::exec_ssh(user, domain, "sudo php-fpm-reload.sh", host_key);
 
     // 9. Maintenance mode selection and activation
     let maintenance_mode = if ctx.yes {
@@ -444,11 +456,13 @@ async fn perform_deployment(ctx: DeploymentContext<'_>) -> Result<()> {
             "{} shared:maintenance {}",
             console_current, maintenance_mode
         ),
+        host_key,
     );
     let _ = ssh::exec_ssh(
         user,
         domain,
         &format!("{} shared:maintenance {}", console_new, maintenance_mode),
+        host_key,
     );
 
     // 10. Hooks: pre_deploy
@@ -456,16 +470,18 @@ async fn perform_deployment(ctx: DeploymentContext<'_>) -> Result<()> {
 
     // 11. Cache clearing, migrations, etc.
     ui::info("Executing deployment tasks...");
-    ssh::exec_ssh(user, domain, &format!("{} shared:clear-opcc", console_new))?;
+    ssh::exec_ssh(user, domain, &format!("{} shared:clear-opcc", console_new), host_key)?;
     ssh::exec_ssh(
         user,
         domain,
         &format!("{} orm:clear-cache:metadata", console_new),
+        host_key,
     )?;
     ssh::exec_ssh(
         user,
         domain,
         &format!("{} orm:clear-cache:query", console_new),
+        host_key,
     )?;
 
     if ctx.yes
@@ -477,6 +493,7 @@ async fn perform_deployment(ctx: DeploymentContext<'_>) -> Result<()> {
             user,
             domain,
             &format!("{} orm:clear-cache:result", console_new),
+            host_key,
         )?;
     }
 
@@ -489,6 +506,7 @@ async fn perform_deployment(ctx: DeploymentContext<'_>) -> Result<()> {
             user,
             domain,
             &format!("{} migrations:migrate --no-interaction", console_new),
+            host_key,
         )?;
     }
 
@@ -501,6 +519,7 @@ async fn perform_deployment(ctx: DeploymentContext<'_>) -> Result<()> {
             user,
             domain,
             &format!("{} orm:schema-tool:update --dump-sql", console_new),
+            host_key,
         )?;
     }
 
@@ -510,11 +529,13 @@ async fn perform_deployment(ctx: DeploymentContext<'_>) -> Result<()> {
             user,
             domain,
             &format!("{} shared:maintenance off", console_current),
+            host_key,
         );
         let _ = ssh::exec_ssh(
             user,
             domain,
             &format!("{} shared:maintenance off", console_new),
+            host_key,
         );
     };
 
@@ -522,7 +543,7 @@ async fn perform_deployment(ctx: DeploymentContext<'_>) -> Result<()> {
     if ctx.env.cops_integration.unwrap_or(false) {
         ui::info("Executing COPS integration...");
 
-        if let Err(e) = ssh::exec_ssh(user, domain, &format!("{} cops:outdated", console_new)) {
+        if let Err(e) = ssh::exec_ssh(user, domain, &format!("{} cops:outdated", console_new), host_key) {
             if ctx.yes {
                 disable_maintenance();
                 return Err(anyhow!(
@@ -542,7 +563,7 @@ async fn perform_deployment(ctx: DeploymentContext<'_>) -> Result<()> {
             }
         }
 
-        if let Err(e) = ssh::exec_ssh(user, domain, &format!("{} cops:permissions", console_new)) {
+        if let Err(e) = ssh::exec_ssh(user, domain, &format!("{} cops:permissions", console_new), host_key) {
             if ctx.yes {
                 disable_maintenance();
                 return Err(anyhow!(
@@ -586,6 +607,7 @@ async fn perform_deployment(ctx: DeploymentContext<'_>) -> Result<()> {
             sq(&release_target),
             sq(&current_symlink)
         ),
+        host_key,
     )?;
 
     // 12. Maintenance mode OFF (on new release)
@@ -594,11 +616,12 @@ async fn perform_deployment(ctx: DeploymentContext<'_>) -> Result<()> {
         user,
         domain,
         &format!("{} shared:maintenance off", console_new),
+        host_key,
     )?;
 
     // 14. Final bytecode cache clear
     ui::info("Final bytecode cache clear...");
-    ssh::exec_ssh(user, domain, &format!("{} shared:clear-opcc", console_new))?;
+    ssh::exec_ssh(user, domain, &format!("{} shared:clear-opcc", console_new), host_key)?;
 
     // 15. Hooks: done_deploy
     execute_hook(&rhai_engine, &rhai_ast, &hook_ctx, "done_deploy")?;
@@ -611,18 +634,20 @@ std::thread_local! {
     pub(crate) static MOCK_SSH_COMMANDS: std::cell::RefCell<Vec<String>> = const { std::cell::RefCell::new(Vec::new()) };
 }
 
-fn setup_rhai_engine(_user: String, _domain: String) -> Engine {
+fn setup_rhai_engine(_user: String, _domain: String, _host_key: Option<String>) -> Engine {
     let mut engine = Engine::new();
 
     #[cfg(not(test))]
     let user_clone = _user.clone();
     #[cfg(not(test))]
     let domain_clone = _domain.clone();
+    #[cfg(not(test))]
+    let host_key_clone = _host_key.clone();
     engine.register_fn(
         "exec_ssh",
         move |command: &str| -> Result<(), Box<rhai::EvalAltResult>> {
             #[cfg(not(test))]
-            if let Err(e) = ssh::exec_ssh(&user_clone, &domain_clone, command) {
+            if let Err(e) = ssh::exec_ssh(&user_clone, &domain_clone, command, host_key_clone.as_deref()) {
                 return Err(Box::new(rhai::EvalAltResult::ErrorRuntime(
                     format!("SSH command failed: {}", e).into(),
                     rhai::Position::NONE,
@@ -777,7 +802,7 @@ mod tests {
         // Reset mock commands
         MOCK_SSH_COMMANDS.with(|c| c.borrow_mut().clear());
 
-        let rhai_engine = setup_rhai_engine("user".to_string(), "example.com".to_string());
+        let rhai_engine = setup_rhai_engine("user".to_string(), "example.com".to_string(), None);
         let rhai_ast = find_hook_file(dir.path(), "test_env")
             .map(|path| compile_hook(&rhai_engine, &path).expect("Failed to compile"));
 
