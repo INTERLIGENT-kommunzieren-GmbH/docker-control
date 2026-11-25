@@ -307,10 +307,6 @@ async fn test_deploy_hooks() -> Result<()> {
     let repo = TestRepo::new("deploy-hooks")?;
     repo.setup_mezzio_project()?;
 
-    // Create a release tag
-    TestRepo::git_run(&repo.root.join("htdocs"), &["tag", "v1.0.0"])?;
-    TestRepo::git_run(&repo.root.join("htdocs"), &["push", "origin", "v1.0.0"])?;
-
     // Setup deploy config
     repo.write_file(
         ".deploy.json",
@@ -326,8 +322,8 @@ async fn test_deploy_hooks() -> Result<()> {
     }"#,
     )?;
 
-    // Create hook script
-    let hooks_dir = repo.root.join("deployments/scripts");
+    // Create hook script in the Git repository (htdocs)
+    let hooks_dir = repo.root.join("htdocs/.docker-control/deployment-scripts");
     fs::create_dir_all(&hooks_dir)?;
     let hook_content = r#"
 fn pre_deploy(console_current, release_dir, console_new, server_root) {
@@ -341,6 +337,14 @@ fn done_deploy(console_current, release_dir, console_new, server_root) {
 }
 "#;
     fs::write(hooks_dir.join("prod.rhai"), hook_content)?;
+
+    // Commit the hook to the repository
+    TestRepo::git_run(&repo.root.join("htdocs"), &["add", ".docker-control/deployment-scripts/prod.rhai"])?;
+    TestRepo::git_run(&repo.root.join("htdocs"), &["commit", "-m", "Add deployment hooks"])?;
+
+    // Create a release tag AFTER adding the hook
+    TestRepo::git_run(&repo.root.join("htdocs"), &["tag", "v1.0.0"])?;
+    TestRepo::git_run(&repo.root.join("htdocs"), &["push", "origin", "v1.0.0"])?;
 
     // Create fake bin directory
     let bin_dir = repo.root.join("bin");
@@ -512,10 +516,6 @@ async fn test_deploy_order_full_verification() -> Result<()> {
     let repo = TestRepo::new("deploy-order")?;
     repo.setup_mezzio_project()?;
 
-    // Create a release tag
-    TestRepo::git_run(&repo.root.join("htdocs"), &["tag", "v1.0.0"])?;
-    TestRepo::git_run(&repo.root.join("htdocs"), &["push", "origin", "v1.0.0"])?;
-
     // Setup deploy config with shared paths
     repo.write_file(
         ".deploy.json",
@@ -532,8 +532,8 @@ async fn test_deploy_order_full_verification() -> Result<()> {
     }"#,
     )?;
 
-    // Create hooks
-    let hooks_dir = repo.root.join("deployments/scripts");
+    // Create hooks in the Git repository (htdocs)
+    let hooks_dir = repo.root.join("htdocs/.docker-control/deployment-scripts");
     fs::create_dir_all(&hooks_dir)?;
     let hook_content = r#"
 fn pre_deploy(console_current, release_dir, console_new, server_root) {
@@ -544,6 +544,14 @@ fn post_deploy(console_current, release_dir, console_new, server_root) {
 }
 "#;
     fs::write(hooks_dir.join("prod.rhai"), hook_content)?;
+
+    // Commit the hook to the repository
+    TestRepo::git_run(&repo.root.join("htdocs"), &["add", ".docker-control/deployment-scripts/prod.rhai"])?;
+    TestRepo::git_run(&repo.root.join("htdocs"), &["commit", "-m", "Add deployment hooks"])?;
+
+    // Create a release tag AFTER adding the hook
+    TestRepo::git_run(&repo.root.join("htdocs"), &["tag", "v1.0.0"])?;
+    TestRepo::git_run(&repo.root.join("htdocs"), &["push", "origin", "v1.0.0"])?;
 
     // Create fake bin directory
     let bin_dir = repo.root.join("bin");
